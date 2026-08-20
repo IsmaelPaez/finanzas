@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 <meta name="apple-mobile-web-app-title" content="Finanzas" />
 <meta name="theme-color" content="#17171b" />
+<link rel="icon" type="image/svg+xml" href="favicon.svg" />
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
@@ -107,8 +108,7 @@ function parseAmountCOP(raw) {
 function parseTipo(raw) {
   const s = String(raw || '').trim().toLowerCase();
   if (s.startsWith('ingreso')) return 'ingreso';
-  if (s.startsWith('extra')) return 'extra';
-  return 'gasto'; // Egreso y cualquier otro caso
+  return 'egreso'; // "Egreso" y los antiguos "Gasto" se tratan igual.
 }
 
 function parseAndMapRows(rows, existingKeys) {
@@ -205,7 +205,7 @@ class ErrorBoundary extends React.Component {
 function FinanzasAppInner() {
   const [transactions, setTransactions] = useState(() => loadJSON('dz_transactions', []));
   const [pastedData, setPastedData] = useState('');
-  const [type, setType] = useState('gasto');
+  const [type, setType] = useState('egreso');
   const [amount, setAmount] = useState('');
   const [category, setCategory] = useState(EXPENSE_CATEGORIES[0].id);
   const [wallet, setWallet] = useState(WALLETS[0]);
@@ -233,10 +233,10 @@ function FinanzasAppInner() {
       if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
         const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel]);
         setTransactions((prev) => {
-          const existingKeys = new Set(prev.map((t) => `${t.date}|${t.amount}|${t.note}|${t.type}|${t.wallet}`));
-          const { imported } = parseAndMapRows(rows, existingKeys);
-          if (imported.length === 0) return prev;
-          return [...imported, ...prev];
+          // Sheets es la fuente de verdad. Reemplazar la caché evita que los
+          // registros de versiones antiguas se dupliquen o alteren el balance.
+          const { imported } = parseAndMapRows(rows, new Set());
+          return imported.sort((a, b) => b.date.localeCompare(a.date));
         });
         setImportStatus('done');
         setImportMsg('Sincronizado con Sheets.');
@@ -348,6 +348,7 @@ function FinanzasAppInner() {
   }
 
   const [viewMode, setViewMode] = useState('month'); // 'month' | 'year'
+  const [activeTab, setActiveTab] = useState('resumen');
   const [periodDate, setPeriodDate] = useState(() => new Date());
 
   function shiftPeriod(dir) {
@@ -380,7 +381,7 @@ function FinanzasAppInner() {
   const totals = useMemo(() => {
     let ingresos = 0, gastos = 0;
     for (const t of monthTx) {
-      if (t.type === 'extra' || isMovimiento(t)) continue; // Extra y Movimientos no cuentan como ingreso/gasto real
+      if (isMovimiento(t)) continue;
       if (t.type === 'ingreso') ingresos += t.amount; else gastos += t.amount;
     }
     return { ingresos, gastos, balance: ingresos - gastos };
@@ -389,7 +390,7 @@ function FinanzasAppInner() {
   const expenseByCategory = useMemo(() => {
     const map = {};
     for (const t of monthTx) {
-      if (t.type !== 'gasto' || isMovimiento(t)) continue;
+      if (t.type !== 'egreso' || isMovimiento(t)) continue;
       const label = t.categoryLabel || categoryMeta(t.category).label;
       map[label] = (map[label] || 0) + t.amount;
     }
@@ -403,8 +404,7 @@ function FinanzasAppInner() {
       const w = t.wallet || WALLETS[0];
       if (!(w in map)) map[w] = 0;
       if (t.type === 'ingreso') map[w] += t.amount;
-      else if (t.type === 'gasto') map[w] -= t.amount;
-      else map[w] += t.amount; // 'extra': se suma tal cual (puede ser negativo), igual que en el Sheet
+      else if (t.type === 'egreso') map[w] -= t.amount;
     }
     return map;
   }, [transactions]);
@@ -445,6 +445,16 @@ function FinanzasAppInner() {
                 style={{ padding: '5px 10px', borderRadius: '5px', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
                   backgroundColor: viewMode === 'year' ? '#e8a33d' : 'transparent', color: viewMode === 'year' ? '#17171b' : '#8a8a92' }}>Año</button>
             </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
+            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos']].map(([id, label]) => (
+              <button key={id} type="button" onClick={() => setActiveTab(id)} className="dz-btn"
+                style={{ flex: 1, padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
+                  backgroundColor: activeTab === id ? 'rgba(232,163,61,0.12)' : '#0f0f12', color: activeTab === id ? '#e8a33d' : '#8a8a92', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+                {label}
+              </button>
+            ))}
           </div>
 
           {false && (
@@ -509,7 +519,7 @@ function FinanzasAppInner() {
             </div>
           )}
 
-          <div style={{ backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '16px' }}>
+          {activeTab === 'resumen' && <div style={{ backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '16px' }}>
             <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '12px' }}>
               <div>
                 <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em' }}>BALANCE — {viewMode === 'month' ? 'MES' : 'AÑO'}</div>
@@ -523,7 +533,7 @@ function FinanzasAppInner() {
                   <div className="dz-mono" style={{ fontSize: '14px', color: '#c9c5bd' }}>{formatCOP(totals.ingresos)}</div>
                 </div>
                 <div style={{ textAlign: 'right' }}>
-                  <div className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.08em', color: '#e2574c' }}>↓ GASTOS</div>
+                  <div className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.08em', color: '#e2574c' }}>↓ EGRESOS</div>
                   <div className="dz-mono" style={{ fontSize: '14px', color: '#c9c5bd' }}>{formatCOP(totals.gastos)}</div>
                 </div>
               </div>
@@ -531,16 +541,16 @@ function FinanzasAppInner() {
             <div style={{ height: '6px', backgroundColor: '#232328', borderRadius: '3px', overflow: 'hidden' }}>
               <div style={{ width: `${meterPct}%`, height: '100%', background: meterPct < 60 ? '#3ea8a0' : meterPct < 90 ? '#e8a33d' : '#e2574c', transition: 'width 0.4s ease' }} />
             </div>
-          </div>
+          </div>}
         </div>
 
-        <form onSubmit={handleAdd} style={{ padding: '18px 20px', borderBottom: '1px solid #2a2a30' }}>
+        <form onSubmit={handleAdd} style={{ display: activeTab === 'registrar' ? 'block' : 'none', padding: '18px 20px', borderBottom: '1px solid #2a2a30' }}>
           <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
-            <button type="button" onClick={() => handleTypeChange('gasto')} className="dz-btn"
+            <button type="button" onClick={() => handleTypeChange('egreso')} className="dz-btn"
               style={{ flex: 1, padding: '9px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
-                border: `1px solid ${type === 'gasto' ? '#e2574c' : '#2a2a30'}`,
-                backgroundColor: type === 'gasto' ? 'rgba(226,87,76,0.12)' : 'transparent',
-                color: type === 'gasto' ? '#e2574c' : '#8a8a92', cursor: 'pointer' }}>Gasto</button>
+                border: `1px solid ${type === 'egreso' ? '#e2574c' : '#2a2a30'}`,
+                backgroundColor: type === 'egreso' ? 'rgba(226,87,76,0.12)' : 'transparent',
+                color: type === 'egreso' ? '#e2574c' : '#8a8a92', cursor: 'pointer' }}>Egreso</button>
             <button type="button" onClick={() => handleTypeChange('ingreso')} className="dz-btn"
               style={{ flex: 1, padding: '9px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
                 border: `1px solid ${type === 'ingreso' ? '#3ea8a0' : '#2a2a30'}`,
@@ -597,7 +607,7 @@ function FinanzasAppInner() {
           </button>
         </form>
 
-        <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
+        <div style={{ display: activeTab === 'resumen' ? 'block' : 'none', padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
           <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>SALDO POR CUENTA</div>
           <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
             {WALLETS.map((w) => (
@@ -618,8 +628,8 @@ function FinanzasAppInner() {
         </div>
 
         {expenseByCategory.length > 0 && (
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
-            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>GASTOS POR CANAL — {periodLabel.toUpperCase()}</div>
+          <div style={{ display: activeTab === 'resumen' ? 'block' : 'none', padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>EGRESOS POR CATEGORÍA — {periodLabel.toUpperCase()}</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               {expenseByCategory.map(([label, val]) => {
                 const pct = maxCatValue > 0 ? (val / maxCatValue) * 100 : 0;
@@ -637,15 +647,15 @@ function FinanzasAppInner() {
           </div>
         )}
 
-        <div className="dz-scroll" style={{ padding: '14px 12px 20px', maxHeight: '420px', overflowY: 'auto' }}>
+        <div className="dz-scroll" style={{ display: activeTab === 'movimientos' ? 'block' : 'none', padding: '14px 12px 20px', maxHeight: '620px', overflowY: 'auto' }}>
           <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', padding: '0 8px 8px' }}>PISTAS · {periodLabel.toUpperCase()}</div>
           {monthTx.length === 0 ? (
             <div style={{ padding: '24px 8px', color: '#6d6d75', fontSize: '13px' }}>Aún no hay registros. Agrega el primero arriba.</div>
           ) : (
             monthTx.slice(0, 150).map((t) => {
               const meta = categoryMeta(t.category);
-              const color = t.type === 'ingreso' ? '#3ea8a0' : t.type === 'extra' ? '#e8a33d' : '#e2574c';
-              const sign = t.type === 'ingreso' ? '+' : t.type === 'extra' ? (t.amount < 0 ? '−' : '±') : '−';
+              const color = t.type === 'ingreso' ? '#3ea8a0' : '#e2574c';
+              const sign = t.type === 'ingreso' ? '+' : '−';
               return (
                 <div key={t.id} className="dz-chan" style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 8px', borderRadius: '6px' }}>
                   <div style={{ width: '30px', height: '30px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center',

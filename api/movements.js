@@ -60,7 +60,7 @@ module.exports = async (req, res) => {
       }
       await sheets.spreadsheets.values.append({
         spreadsheetId, range: `'${sheetName}'!A:F`, valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type, tx.wallet, tx.categoryLabel]] },
+        requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel]] },
       });
       return res.status(201).json({ ok: true });
     }
