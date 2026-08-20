@@ -54,6 +54,7 @@ const { useState, useEffect, useMemo } = React;
 // La API corre en Vercel, en el mismo dominio de la página. Las credenciales
 // de Google se guardan como variables privadas de Vercel.
 const MOVEMENTS_API_URL = '/api/movements';
+const BUDGETS_API_URL = '/api/budgets';
 
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
@@ -232,13 +233,39 @@ function FinanzasAppInner() {
   const [importStatus, setImportStatus] = useState('idle'); // idle | loading | done | error
   const [importMsg, setImportMsg] = useState('');
   const [editingTx, setEditingTx] = useState(null);
+  const [budgets, setBudgets] = useState([]);
+  const [budgetCategory, setBudgetCategory] = useState(EXPENSE_CATEGORIES[0].label);
+  const [budgetAmount, setBudgetAmount] = useState('');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
   useEffect(() => {
     pullNow();
+    pullBudgets();
     // eslint-disable-next-line
   }, []); // solo al abrir la app
+
+  async function pullBudgets() {
+    try {
+      const response = await fetch(BUDGETS_API_URL);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'No se pudieron leer los presupuestos.');
+      setBudgets(data);
+    } catch (e) { console.warn(e); }
+  }
+
+  async function saveBudget(e) {
+    e.preventDefault();
+    const limit = Number(budgetAmount);
+    if (!limit || limit < 0) return;
+    const response = await fetch(BUDGETS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: budgetCategory, limit }) });
+    if (response.ok) { setBudgetAmount(''); pullBudgets(); }
+  }
+
+  async function deleteBudget(row) {
+    const response = await fetch(BUDGETS_API_URL, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row }) });
+    if (response.ok) pullBudgets();
+  }
 
   async function pullNow() {
     setImportStatus('loading');
@@ -528,10 +555,10 @@ function FinanzasAppInner() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '6px', marginBottom: '14px' }}>
-            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos']].map(([id, label]) => (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
+            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos']].map(([id, label]) => (
               <button key={id} type="button" onClick={() => setActiveTab(id)} className="dz-btn"
-                style={{ flex: 1, padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
+                style={{ flex: '1 1 30%', padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
                   backgroundColor: activeTab === id ? 'rgba(232,163,61,0.12)' : '#0f0f12', color: activeTab === id ? '#e8a33d' : '#8a8a92', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
                 {label}
               </button>
@@ -734,7 +761,7 @@ function FinanzasAppInner() {
           </div>
         )}
 
-        {activeTab === 'resumen' && (
+        {activeTab === 'tendencias' && (
           <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
             <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>
               TENDENCIA VS. PERÍODO ANTERIOR
@@ -763,6 +790,29 @@ function FinanzasAppInner() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {activeTab === 'presupuestos' && (
+          <div style={{ padding: '18px 20px' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>PRESUPUESTOS MENSUALES</div>
+            {viewMode === 'year' && <div style={{ fontSize: '12px', color: '#e8a33d', marginBottom: '10px' }}>Cambia a vista Mes para ver el consumo frente a cada presupuesto.</div>}
+            <form onSubmit={saveBudget} style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
+              <select value={budgetCategory} onChange={(e) => setBudgetCategory(e.target.value)} style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }}>
+                {EXPENSE_CATEGORIES.filter(c => c.label !== 'Movimientos').map(c => <option key={c.id} value={c.label}>{c.label}</option>)}
+              </select>
+              <input type="number" inputMode="numeric" value={budgetAmount} onChange={(e) => setBudgetAmount(e.target.value)} placeholder="$ límite" style={{ width: '104px', padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <button className="dz-btn" style={{ border: 'none', borderRadius: '6px', padding: '0 12px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+</button>
+            </form>
+            {budgets.length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Define un límite para empezar a controlar tus egresos.</div> : budgets.map((budget) => {
+              const spent = viewMode === 'month' ? (expenseByCategory.find(([label]) => label === budget.category)?.[1] || 0) : 0;
+              const percent = Math.min(100, Math.round((spent / budget.limit) * 100));
+              const color = percent >= 100 ? '#e2574c' : percent >= 80 ? '#e8a33d' : '#3ea8a0';
+              return <div key={budget.row} style={{ padding: '10px 0', borderBottom: '1px solid #2a2a30' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '13px' }}><span>{budget.category}</span><span className="dz-mono" style={{ color: '#8a8a92' }}>{formatCOP(spent)} / {formatCOP(budget.limit)}</span><button onClick={() => deleteBudget(budget.row)} style={{ border: 'none', background: 'none', color: '#e2574c', cursor: 'pointer' }}>×</button></div>
+                <div style={{ height: '5px', marginTop: '7px', backgroundColor: '#232328', borderRadius: '3px' }}><div style={{ width: `${percent}%`, height: '100%', backgroundColor: color, borderRadius: '3px' }} /></div>
+              </div>;
+            })}
           </div>
         )}
 
