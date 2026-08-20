@@ -27,13 +27,17 @@ function asAmount(value) {
   return Number(String(value || '').replace(/[^0-9-]/g, '')) || 0;
 }
 
+function normalizedType(value) {
+  return String(value || '').trim().toLowerCase().startsWith('ingreso') ? 'ingreso' : 'egreso';
+}
+
 function transaction(row, rowNumber) {
   return {
     id: `row-${rowNumber}`,
     date: asDate(row[0]),
     note: String(row[1] || ''),
     amount: asAmount(row[2]),
-    type: String(row[3] || 'gasto'),
+    type: normalizedType(row[3]),
     wallet: String(row[4] || 'Nequi'),
     categoryLabel: String(row[5] || 'Otros'),
   };
@@ -66,19 +70,31 @@ module.exports = async (req, res) => {
       return res.status(201).json({ ok: true });
     }
 
+    if (req.method === 'PATCH') {
+      const { original, updated } = req.body || {};
+      if (!original || !updated || !updated.date || !updated.amount) {
+        return res.status(400).json({ error: 'Datos de actualización incompletos.' });
+      }
+      const row = String(original.id || '').replace('row-', '');
+      if (!/^\d+$/.test(row)) return res.status(400).json({ error: 'Movimiento sin identificador de Sheet.' });
+      await sheets.spreadsheets.values.update({
+        spreadsheetId, range: `'${sheetName}'!A${row}:F${row}`, valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[updated.date, updated.note || '', Number(updated.amount), normalizedType(updated.type) === 'ingreso' ? 'Ingreso' : 'Egreso', updated.wallet, updated.categoryLabel]] },
+      });
+      return res.status(200).json({ ok: true });
+    }
+
     if (req.method === 'DELETE') {
       const target = req.body || {};
       const rows = await list(sheets);
-      const match = rows.find(tx => tx.date === target.date && tx.note === String(target.note || '') &&
-        tx.amount === Number(target.amount) && tx.type === target.type && tx.wallet === target.wallet &&
-        tx.categoryLabel === target.categoryLabel);
+      const match = rows.find(tx => tx.id === target.id);
       if (!match) return res.status(404).json({ error: 'Movimiento no encontrado.' });
       const row = match.id.replace('row-', '');
       await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${sheetName}'!A${row}:F${row}` });
       return res.status(200).json({ ok: true });
     }
 
-    res.setHeader('Allow', 'GET, POST, DELETE');
+    res.setHeader('Allow', 'GET, POST, PATCH, DELETE');
     return res.status(405).json({ error: 'Método no permitido.' });
   } catch (error) {
     console.error(error);

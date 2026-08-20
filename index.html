@@ -141,7 +141,7 @@ function parseAndMapRows(rows, existingKeys) {
     const amountNum = parseAmountCOP(r[2]);
     const categoryLabel = (r[5] || '').trim();
     const tx = {
-      id: 'imp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      id: r[6] || ('imp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7)),
       type: txType,
       amount: isNaN(amountNum) ? 0 : amountNum,
       category: categoryIdFromLabel(categoryLabel, txType === 'ingreso'),
@@ -231,6 +231,7 @@ function FinanzasAppInner() {
   const [syncStatus, setSyncStatus] = useState('idle');
   const [importStatus, setImportStatus] = useState('idle'); // idle | loading | done | error
   const [importMsg, setImportMsg] = useState('');
+  const [editingTx, setEditingTx] = useState(null);
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
@@ -248,7 +249,7 @@ function FinanzasAppInner() {
       const objRows = await response.json();
       if (!response.ok) throw new Error(objRows.error || 'No se pudo leer Google Sheets.');
       if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
-        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel]);
+        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id]);
         setTransactions((prev) => {
           // Sheets es la fuente de verdad. Reemplazar la caché evita que los
           // registros de versiones antiguas se dupliquen o alteren el balance.
@@ -289,6 +290,24 @@ function FinanzasAppInner() {
     }
   }
 
+  async function updateInSheets(original, updated) {
+    setSyncStatus('sending');
+    try {
+      const response = await fetch(MOVEMENTS_API_URL, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ original, updated }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'No se pudo actualizar el movimiento.');
+      setEditingTx(null);
+      setSyncStatus('sent');
+      setTimeout(() => pullNow(), 300);
+    } catch (e) {
+      setSyncStatus('failed');
+      setImportMsg(e.message || 'No se pudo actualizar el movimiento.');
+    }
+  }
+
   async function deleteFromSheets(tx) {
     try {
       const response = await fetch(MOVEMENTS_API_URL, {
@@ -317,10 +336,30 @@ function FinanzasAppInner() {
       type, amount: num, category, categoryLabel: categoryMeta(category).label,
       wallet, note: note.trim(), date: todayStr(),
     };
-    setTransactions((prev) => [tx, ...prev]);
+    if (editingTx) updateInSheets(editingTx, tx);
+    else {
+      setTransactions((prev) => [tx, ...prev]);
+      syncToSheets(tx);
+    }
     setAmount('');
     setNote('');
-    syncToSheets(tx);
+  }
+
+  function handleEdit(tx) {
+    setEditingTx(tx);
+    setType(tx.type);
+    setAmount(String(tx.amount));
+    setCategory(tx.category);
+    setWallet(tx.wallet);
+    setNote(tx.note || '');
+    setActiveTab('registrar');
+  }
+
+  function cancelEdit() {
+    setEditingTx(null);
+    setAmount('');
+    setNote('');
+    handleTypeChange('egreso');
   }
 
   function handleDelete(id) {
@@ -620,8 +659,14 @@ function FinanzasAppInner() {
           <button type="submit" className="dz-btn"
             style={{ width: '100%', padding: '11px', borderRadius: '6px', border: 'none', backgroundColor: '#e8a33d', color: '#17171b',
               fontWeight: 700, fontSize: '14px', cursor: 'pointer' }}>
-            + Registrar
+            {editingTx ? 'Guardar cambios' : '+ Registrar'}
           </button>
+          {editingTx && (
+            <button type="button" onClick={cancelEdit} className="dz-btn"
+              style={{ width: '100%', marginTop: '8px', padding: '9px', borderRadius: '6px', border: '1px solid #2a2a30', background: 'none', color: '#8a8a92', fontWeight: 600, cursor: 'pointer' }}>
+              Cancelar edición
+            </button>
+          )}
         </form>
 
         <div style={{ display: activeTab === 'resumen' ? 'block' : 'none', padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
@@ -689,6 +734,10 @@ function FinanzasAppInner() {
                   <button onClick={() => handleDelete(t.id)} aria-label="Eliminar" className="dz-btn"
                     style={{ background: 'none', border: 'none', color: '#4a4a52', cursor: 'pointer', padding: '4px', fontSize: '14px' }}>
                     🗑
+                  </button>
+                  <button onClick={() => handleEdit(t)} aria-label="Editar" className="dz-btn"
+                    style={{ background: 'none', border: 'none', color: '#8a8a92', cursor: 'pointer', padding: '4px', fontSize: '14px' }}>
+                    ✎
                   </button>
                 </div>
               );
