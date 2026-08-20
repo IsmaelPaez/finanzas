@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Finanzas · Dozce</title>
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Finanzas" />
+<meta name="theme-color" content="#17171b" />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script crossorigin src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.5/babel.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: #17171b; }
+  body { font-family: 'Inter', system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+  #root { min-height: 100vh; }
+  .dz-display { font-family: 'Space Grotesk', sans-serif; }
+  .dz-mono { font-family: 'JetBrains Mono', monospace; }
+  .dz-scroll::-webkit-scrollbar { width: 6px; }
+  .dz-scroll::-webkit-scrollbar-thumb { background: #35353d; border-radius: 3px; }
+  .dz-chan { transition: background 0.15s ease; }
+  .dz-chan:hover { background: #202024; }
+  .dz-btn:active { transform: scale(0.97); }
+  input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+
+const { useState, useEffect, useMemo } = React;
+
+const INCOME_CATEGORIES = [
+  { id: 'uber', label: 'Uber', icon: '🚗' },
+  { id: 'otro_ingreso', label: 'Otros', icon: '•••' },
+  { id: 'movimientos', label: 'Movimientos', icon: '🔄' },
+];
+
+const EXPENSE_CATEGORIES = [
+  { id: 'alimentacion', label: 'Alimentación', icon: '🍴' },
+  { id: 'inversion', label: 'Inversión', icon: '📈' },
+  { id: 'transporte', label: 'Transporte', icon: '🚗' },
+  { id: 'entretenimiento', label: 'Entretenimiento', icon: '🎉' },
+  { id: 'suscripciones', label: 'Suscripciones', icon: '🔁' },
+  { id: 'mascotas', label: 'Mascotas', icon: '🐾' },
+  { id: 'ahorro', label: 'Ahorro', icon: '🐷' },
+  { id: 'regalos', label: 'Regalos', icon: '🎁' },
+  { id: 'cuidado_personal', label: 'Cuidado personal', icon: '🧴' },
+  { id: 'deudas', label: 'Deudas', icon: '💳' },
+  { id: 'otro_gasto', label: 'Otros', icon: '•••' },
+  { id: 'movimientos_gasto', label: 'Movimientos', icon: '🔄' },
+];
+
+const MOVIMIENTOS_LABEL = 'movimientos';
+
+const ALL_CATEGORIES = [...INCOME_CATEGORIES, ...EXPENSE_CATEGORIES];
+
+const WALLETS = ['Nequi', 'Efectivo', 'Nu'];
+
+function normalizeWallet(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s.startsWith('nequi')) return 'Nequi';
+  if (s.startsWith('efectivo')) return 'Efectivo';
+  if (s.startsWith('nu')) return 'Nu'; // cubre "Nu" y "Nu Bank"
+  return (raw || WALLETS[0]).toString().trim();
+}
+
+function categoryMeta(id) {
+  return ALL_CATEGORIES.find((c) => c.id === id) || { label: id, icon: '•••' };
+}
+
+function categoryIdFromLabel(label, isIncome) {
+  const pool = isIncome ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const found = pool.find((c) => c.label.toLowerCase() === String(label).trim().toLowerCase());
+  return found ? found.id : (isIncome ? 'otro_ingreso' : 'otro_gasto');
+}
+
+function parseAmountCOP(raw) {
+  let s = String(raw).trim();
+  if (!s) return NaN;
+  const negative = /^-/.test(s) || /^\(.*\)$/.test(s);
+  s = s.replace(/[^0-9.,]/g, '');
+  if (!s) return NaN;
+  if (s.indexOf(',') !== -1 && s.indexOf('.') !== -1) {
+    // both present: '.' = thousands, ',' = decimal (formato latino)
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else if (s.indexOf(',') !== -1) {
+    const parts = s.split(',');
+    s = (parts.length > 2 || parts[parts.length - 1].length === 3) ? s.replace(/,/g, '') : s.replace(',', '.');
+  } else if (s.indexOf('.') !== -1) {
+    const parts = s.split('.');
+    if (parts.length > 2 || parts[parts.length - 1].length === 3) s = s.replace(/\./g, '');
+  }
+  const n = parseFloat(s);
+  return negative ? -Math.abs(n) : n;
+}
+
+function parseTipo(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s.startsWith('ingreso')) return 'ingreso';
+  if (s.startsWith('extra')) return 'extra';
+  return 'gasto'; // Egreso y cualquier otro caso
+}
+
+function parseAndMapRows(rows, existingKeys) {
+  const imported = [];
+  let skippedBadRow = 0;
+  for (const r of rows) {
+    if (!r || r.length < 6 || !r[0]) { skippedBadRow++; continue; }
+    const rawDate = String(r[0]).trim();
+    let dateStr = rawDate;
+    const dmY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawDate);
+    if (dmY) dateStr = `${dmY[3]}-${dmY[2].padStart(2, '0')}-${dmY[1].padStart(2, '0')}`;
+    const txType = parseTipo(r[3]);
+    const amountNum = parseAmountCOP(r[2]);
+    const categoryLabel = (r[5] || '').trim();
+    const tx = {
+      id: 'imp_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      type: txType,
+      amount: isNaN(amountNum) ? 0 : amountNum,
+      category: categoryIdFromLabel(categoryLabel, txType === 'ingreso'),
+      categoryLabel: categoryLabel,
+      wallet: normalizeWallet(r[4]),
+      note: (r[1] || '').trim(),
+      date: dateStr,
+    };
+    const key = `${tx.date}|${tx.amount}|${tx.note}|${tx.type}|${tx.wallet}`;
+    if (!existingKeys.has(key)) { imported.push(tx); }
+  }
+  return { imported, skippedBadRow };
+}
+
+function formatCOP(n) {
+  const sign = n < 0 ? '-' : '';
+  return sign + '$' + Math.abs(Math.round(n)).toLocaleString('es-CO');
+}
+
+function todayStr() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+
+function monthLabel(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
+}
+
+function loadJSON(key, fallback) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return fallback;
+    const parsed = JSON.parse(raw);
+    return parsed;
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function saveJSON(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { error };
+  }
+  componentDidCatch(error, info) {
+    console.error('FinanzasApp error:', error, info);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ backgroundColor: '#17171b', color: '#eae6df', minHeight: '100vh', padding: '24px', fontFamily: 'system-ui, sans-serif' }}>
+          <div style={{ fontSize: '14px', fontWeight: 600, color: '#e2574c', marginBottom: '8px' }}>Algo falló al cargar la app</div>
+          <div style={{ fontSize: '12px', color: '#8a8a92', marginBottom: '16px' }}>{String(this.state.error && this.state.error.message ? this.state.error.message : this.state.error)}</div>
+          <button onClick={() => this.setState({ error: null })}
+            style={{ padding: '9px 16px', borderRadius: '6px', border: 'none', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}>
+            Reintentar
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function FinanzasAppInner() {
+  const [transactions, setTransactions] = useState(() => loadJSON('dz_transactions', []));
+  const [sheetsUrl, setSheetsUrl] = useState(() => loadJSON('dz_sheets_url', ''));
+  const [pastedData, setPastedData] = useState('');
+  const [type, setType] = useState('gasto');
+  const [amount, setAmount] = useState('');
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0].id);
+  const [wallet, setWallet] = useState(WALLETS[0]);
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const [showSettings, setShowSettings] = useState(false);
+  const [urlDraft, setUrlDraft] = useState('');
+  const [syncStatus, setSyncStatus] = useState('idle');
+  const [importStatus, setImportStatus] = useState('idle'); // idle | loading | done | error
+  const [importMsg, setImportMsg] = useState('');
+
+  useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
+
+  function handleTypeChange(next) {
+    setType(next);
+    setCategory(next === 'ingreso' ? INCOME_CATEGORIES[0].id : EXPENSE_CATEGORIES[0].id);
+  }
+
+  function saveSheetsUrl() {
+    const trimmed = urlDraft.trim();
+    setSheetsUrl(trimmed);
+    saveJSON('dz_sheets_url', trimmed);
+    setShowSettings(false);
+  }
+
+  async function syncToSheets(tx) {
+    if (!sheetsUrl) return;
+    setSyncStatus('sending');
+    try {
+      await fetch(sheetsUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify(tx),
+      });
+      setSyncStatus('sent');
+      setTimeout(() => setSyncStatus('idle'), 2000);
+    } catch (e) {
+      setSyncStatus('failed');
+      setTimeout(() => setSyncStatus('idle'), 3000);
+    }
+  }
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    setError('');
+    const num = parseFloat(amount);
+    if (!amount || isNaN(num) || num <= 0) {
+      setError('Ingresa un monto válido.');
+      return;
+    }
+    const tx = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+      type, amount: num, category, categoryLabel: categoryMeta(category).label,
+      wallet, note: note.trim(), date: todayStr(),
+    };
+    setTransactions((prev) => [tx, ...prev]);
+    setAmount('');
+    setNote('');
+    syncToSheets(tx);
+  }
+
+  function handleDelete(id) {
+    setTransactions((prev) => prev.filter((t) => t.id !== id));
+  }
+
+  function handleResetAll() {
+    if (window.confirm('¿Borrar TODOS los registros de la app? Esto no afecta tu Google Sheet.')) {
+      setTransactions([]);
+      setImportStatus('idle');
+      setImportMsg('');
+    }
+  }
+
+  function handleImport() {
+    if (!pastedData.trim()) return;
+    setImportStatus('loading');
+    setImportMsg('');
+    try {
+      const parsed = Papa.parse(pastedData.trim(), { skipEmptyLines: true });
+      let rows = parsed.data;
+      // if the first row looks like a header (non-numeric amount column), drop it
+      if (rows.length && rows[0][2] && isNaN(parseFloat(String(rows[0][2]).replace(/[^0-9.-]/g, '')))) {
+        rows = rows.slice(1);
+      }
+      const existingKeys = new Set(transactions.map((t) => `${t.date}|${t.amount}|${t.note}|${t.type}|${t.wallet}`));
+      const { imported, skippedBadRow } = parseAndMapRows(rows, existingKeys);
+      setTransactions((prev) => [...imported, ...prev]);
+      setImportStatus('done');
+      const skippedDup = rows.length - imported.length - skippedBadRow;
+      let msg = `${imported.length} registros importados.`;
+      if (skippedDup > 0) msg += ` ${skippedDup} ya existían.`;
+      if (skippedBadRow > 0) msg += ` ${skippedBadRow} filas con formato inesperado se omitieron.`;
+      setImportMsg(msg);
+      setPastedData('');
+    } catch (e) {
+      setImportStatus('error');
+      setImportMsg(e.message || 'Error al importar.');
+    }
+  }
+
+  const [viewMode, setViewMode] = useState('month'); // 'month' | 'year'
+  const [periodDate, setPeriodDate] = useState(() => new Date());
+
+  function shiftPeriod(dir) {
+    setPeriodDate((prev) => {
+      const d = new Date(prev);
+      if (viewMode === 'month') d.setMonth(d.getMonth() + dir);
+      else d.setFullYear(d.getFullYear() + dir);
+      return d;
+    });
+  }
+
+  const periodKeyStr = viewMode === 'month'
+    ? `${periodDate.getFullYear()}-${String(periodDate.getMonth() + 1).padStart(2, '0')}`
+    : `${periodDate.getFullYear()}`;
+
+  const periodLabel = viewMode === 'month'
+    ? periodDate.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
+    : `Año ${periodDate.getFullYear()}`;
+
+  const monthTx = useMemo(
+    () => transactions.filter((t) => (viewMode === 'month' ? t.date.slice(0, 7) : t.date.slice(0, 4)) === periodKeyStr),
+    [transactions, periodKeyStr, viewMode]
+  );
+
+  function isMovimiento(t) {
+    const label = (t.categoryLabel || categoryMeta(t.category).label || '').trim().toLowerCase();
+    return label === MOVIMIENTOS_LABEL;
+  }
+
+  const totals = useMemo(() => {
+    let ingresos = 0, gastos = 0;
+    for (const t of monthTx) {
+      if (t.type === 'extra' || isMovimiento(t)) continue; // Extra y Movimientos no cuentan como ingreso/gasto real
+      if (t.type === 'ingreso') ingresos += t.amount; else gastos += t.amount;
+    }
+    return { ingresos, gastos, balance: ingresos - gastos };
+  }, [monthTx]);
+
+  const expenseByCategory = useMemo(() => {
+    const map = {};
+    for (const t of monthTx) {
+      if (t.type !== 'gasto' || isMovimiento(t)) continue;
+      const label = t.categoryLabel || categoryMeta(t.category).label;
+      map[label] = (map[label] || 0) + t.amount;
+    }
+    return Object.entries(map).sort((a, b) => b[1] - a[1]);
+  }, [monthTx]);
+
+  const walletBalances = useMemo(() => {
+    const map = {};
+    for (const w of WALLETS) map[w] = 0;
+    for (const t of transactions) {
+      const w = t.wallet || WALLETS[0];
+      if (!(w in map)) map[w] = 0;
+      if (t.type === 'ingreso') map[w] += t.amount;
+      else if (t.type === 'gasto') map[w] -= t.amount;
+      else map[w] += t.amount; // 'extra': se suma tal cual (puede ser negativo), igual que en el Sheet
+    }
+    return map;
+  }, [transactions]);
+
+  const maxCatValue = expenseByCategory.length ? expenseByCategory[0][1] : 0;
+  const categories = type === 'ingreso' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
+  const meterPct = totals.ingresos > 0 ? Math.min(100, Math.round((totals.gastos / totals.ingresos) * 100)) : (totals.gastos > 0 ? 100 : 0);
+
+  return (
+    <div style={{ backgroundColor: '#17171b', color: '#eae6df', minHeight: '100vh' }}>
+      <div style={{ maxWidth: '480px', margin: '0 auto', paddingBottom: '40px' }}>
+
+        <div style={{ borderBottom: '1px solid #2a2a30', padding: '20px 20px 18px' }}>
+          <div className="flex items-center justify-between mb-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+            <div className="dz-mono" style={{ fontSize: '11px', letterSpacing: '0.14em', color: '#8a8a92', textTransform: 'uppercase' }}>Sesión activa</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {sheetsUrl && (
+                <span className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.06em', color: syncStatus === 'failed' ? '#e2574c' : syncStatus === 'sending' ? '#e8a33d' : '#3ea8a0' }}>
+                  {syncStatus === 'sending' ? 'ENVIANDO…' : syncStatus === 'failed' ? 'SIN CONEXIÓN' : 'SHEETS ✓'}
+                </span>
+              )}
+              <button onClick={() => { setUrlDraft(sheetsUrl); setShowSettings((s) => !s); }} className="dz-btn"
+                style={{ background: 'none', border: 'none', color: '#6d6d75', cursor: 'pointer', fontSize: '16px', padding: '4px' }} aria-label="Ajustes">
+                ⚙️
+              </button>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button onClick={() => shiftPeriod(-1)} className="dz-btn"
+                style={{ background: 'none', border: '1px solid #2a2a30', borderRadius: '6px', color: '#8a8a92', width: '28px', height: '28px', cursor: 'pointer', fontSize: '13px' }}>‹</button>
+              <div className="dz-display" style={{ fontSize: '17px', fontWeight: 600, color: '#eae6df', textTransform: 'capitalize', minWidth: '130px', textAlign: 'center' }}>
+                {periodLabel}
+              </div>
+              <button onClick={() => shiftPeriod(1)} className="dz-btn"
+                style={{ background: 'none', border: '1px solid #2a2a30', borderRadius: '6px', color: '#8a8a92', width: '28px', height: '28px', cursor: 'pointer', fontSize: '13px' }}>›</button>
+            </div>
+            <div style={{ display: 'flex', gap: '4px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '6px', padding: '2px' }}>
+              <button onClick={() => setViewMode('month')} className="dz-btn"
+                style={{ padding: '5px 10px', borderRadius: '5px', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                  backgroundColor: viewMode === 'month' ? '#e8a33d' : 'transparent', color: viewMode === 'month' ? '#17171b' : '#8a8a92' }}>Mes</button>
+              <button onClick={() => setViewMode('year')} className="dz-btn"
+                style={{ padding: '5px 10px', borderRadius: '5px', border: 'none', fontSize: '11px', fontWeight: 600, cursor: 'pointer',
+                  backgroundColor: viewMode === 'year' ? '#e8a33d' : 'transparent', color: viewMode === 'year' ? '#17171b' : '#8a8a92' }}>Año</button>
+            </div>
+          </div>
+
+          {showSettings && (
+            <div style={{ backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
+              <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.08em', marginBottom: '8px' }}>URL DE GOOGLE SHEETS (APPS SCRIPT)</div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="text" placeholder="https://script.google.com/macros/s/.../exec" value={urlDraft}
+                  onChange={(e) => setUrlDraft(e.target.value)}
+                  style={{ flex: 1, padding: '9px 10px', borderRadius: '6px', backgroundColor: '#17171b', border: '1px solid #2a2a30', color: '#eae6df', fontSize: '12px', outline: 'none' }} />
+                <button onClick={saveSheetsUrl} className="dz-btn"
+                  style={{ padding: '9px 14px', borderRadius: '6px', border: 'none', backgroundColor: '#3ea8a0', color: '#0f0f12', cursor: 'pointer', fontWeight: 700 }}>✓</button>
+                <button onClick={() => setShowSettings(false)} className="dz-btn"
+                  style={{ padding: '9px 14px', borderRadius: '6px', border: '1px solid #2a2a30', background: 'none', color: '#8a8a92', cursor: 'pointer' }}>✕</button>
+              </div>
+              <div style={{ fontSize: '11px', color: '#6d6d75', marginTop: '8px' }}>Pega aquí la URL /exec que te dio Apps Script. Cada registro nuevo se enviará automáticamente.</div>
+
+              <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #2a2a30' }}>
+                <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.08em', marginBottom: '8px' }}>IMPORTAR HISTORIAL (PEGA TUS DATOS)</div>
+                <div style={{ fontSize: '11px', color: '#6d6d75', marginBottom: '8px' }}>
+                  En tu Sheet, selecciona las celdas de "movimientos" (sin encabezado) → Copiar. Luego pega aquí.
+                </div>
+                <textarea
+                  value={pastedData}
+                  onChange={(e) => setPastedData(e.target.value)}
+                  placeholder="Pega aquí las filas copiadas de tu Sheet…"
+                  rows={4}
+                  style={{
+                    width: '100%', padding: '9px 10px', borderRadius: '6px', backgroundColor: '#17171b',
+                    border: '1px solid #2a2a30', color: '#eae6df', fontSize: '11px', outline: 'none',
+                    fontFamily: "'JetBrains Mono', monospace", resize: 'vertical', marginBottom: '8px',
+                  }}
+                />
+                <button type="button" onClick={handleImport} disabled={importStatus === 'loading' || !pastedData.trim()} className="dz-btn"
+                  style={{ width: '100%', padding: '9px', borderRadius: '6px', border: '1px solid #3ea8a0', background: 'rgba(62,168,160,0.1)',
+                    color: '#3ea8a0', fontSize: '13px', fontWeight: 600, cursor: (importStatus === 'loading' || !pastedData.trim()) ? 'default' : 'pointer',
+                    opacity: !pastedData.trim() ? 0.5 : 1 }}>
+                  {importStatus === 'loading' ? 'Importando…' : 'Importar datos pegados'}
+                </button>
+                {importMsg && (
+                  <div style={{ fontSize: '11px', marginTop: '6px', color: importStatus === 'error' ? '#e2574c' : '#8a8a92' }}>{importMsg}</div>
+                )}
+                <button type="button" onClick={handleResetAll} className="dz-btn"
+                  style={{ width: '100%', padding: '8px', borderRadius: '6px', border: '1px solid #e2574c', background: 'none',
+                    color: '#e2574c', fontSize: '12px', marginTop: '10px', cursor: 'pointer' }}>
+                  Borrar todos los registros de la app
+                </button>
+              </div>
+            </div>
+          )}
+
+          <div style={{ backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '12px' }}>
+              <div>
+                <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em' }}>BALANCE — {viewMode === 'month' ? 'MES' : 'AÑO'}</div>
+                <div className="dz-display dz-mono" style={{ fontSize: '30px', fontWeight: 700, color: totals.balance >= 0 ? '#3ea8a0' : '#e2574c', lineHeight: 1.1 }}>
+                  {formatCOP(totals.balance)}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: '16px' }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.08em', color: '#3ea8a0' }}>↑ INGRESOS</div>
+                  <div className="dz-mono" style={{ fontSize: '14px', color: '#c9c5bd' }}>{formatCOP(totals.ingresos)}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.08em', color: '#e2574c' }}>↓ GASTOS</div>
+                  <div className="dz-mono" style={{ fontSize: '14px', color: '#c9c5bd' }}>{formatCOP(totals.gastos)}</div>
+                </div>
+              </div>
+            </div>
+            <div style={{ height: '6px', backgroundColor: '#232328', borderRadius: '3px', overflow: 'hidden' }}>
+              <div style={{ width: `${meterPct}%`, height: '100%', background: meterPct < 60 ? '#3ea8a0' : meterPct < 90 ? '#e8a33d' : '#e2574c', transition: 'width 0.4s ease' }} />
+            </div>
+          </div>
+        </div>
+
+        <form onSubmit={handleAdd} style={{ padding: '18px 20px', borderBottom: '1px solid #2a2a30' }}>
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+            <button type="button" onClick={() => handleTypeChange('gasto')} className="dz-btn"
+              style={{ flex: 1, padding: '9px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
+                border: `1px solid ${type === 'gasto' ? '#e2574c' : '#2a2a30'}`,
+                backgroundColor: type === 'gasto' ? 'rgba(226,87,76,0.12)' : 'transparent',
+                color: type === 'gasto' ? '#e2574c' : '#8a8a92', cursor: 'pointer' }}>Gasto</button>
+            <button type="button" onClick={() => handleTypeChange('ingreso')} className="dz-btn"
+              style={{ flex: 1, padding: '9px', borderRadius: '6px', fontSize: '13px', fontWeight: 600,
+                border: `1px solid ${type === 'ingreso' ? '#3ea8a0' : '#2a2a30'}`,
+                backgroundColor: type === 'ingreso' ? 'rgba(62,168,160,0.12)' : 'transparent',
+                color: type === 'ingreso' ? '#3ea8a0' : '#8a8a92', cursor: 'pointer' }}>Ingreso</button>
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+            <div style={{ position: 'relative', flex: 1 }}>
+              <span className="dz-mono" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: '#6d6d75', fontSize: '15px' }}>$</span>
+              <input type="number" inputMode="decimal" placeholder="0" value={amount} onChange={(e) => setAmount(e.target.value)} className="dz-mono"
+                style={{ width: '100%', padding: '10px 12px 10px 26px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df', fontSize: '16px', outline: 'none' }} />
+            </div>
+            <input type="text" placeholder="Nota (opcional)" value={note} onChange={(e) => setNote(e.target.value)}
+              style={{ flex: 1, padding: '10px 12px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df', fontSize: '14px', outline: 'none' }} />
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {categories.map((c) => {
+              const active = category === c.id;
+              return (
+                <button key={c.id} type="button" onClick={() => setCategory(c.id)} className="dz-btn"
+                  style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '6px 10px', borderRadius: '999px',
+                    border: `1px solid ${active ? '#e8a33d' : '#2a2a30'}`,
+                    backgroundColor: active ? 'rgba(232,163,61,0.12)' : 'transparent',
+                    color: active ? '#e8a33d' : '#8a8a92', fontSize: '12px', cursor: 'pointer' }}>
+                  <span>{c.icon}</span>{c.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', marginBottom: '12px' }}>
+            {WALLETS.map((w) => {
+              const active = wallet === w;
+              return (
+                <button key={w} type="button" onClick={() => setWallet(w)} className="dz-btn"
+                  style={{ padding: '6px 12px', borderRadius: '999px',
+                    border: `1px solid ${active ? '#3ea8a0' : '#2a2a30'}`,
+                    backgroundColor: active ? 'rgba(62,168,160,0.12)' : 'transparent',
+                    color: active ? '#3ea8a0' : '#8a8a92', fontSize: '12px', cursor: 'pointer' }}>
+                  {w}
+                </button>
+              );
+            })}
+          </div>
+
+          {error && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '10px' }}>{error}</div>}
+
+          <button type="submit" className="dz-btn"
+            style={{ width: '100%', padding: '11px', borderRadius: '6px', border: 'none', backgroundColor: '#e8a33d', color: '#17171b',
+              fontWeight: 700, fontSize: '14px', cursor: 'pointer' }}>
+            + Registrar
+          </button>
+        </form>
+
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
+          <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>SALDO POR CUENTA</div>
+          <div style={{ display: 'flex', gap: '10px', marginBottom: '10px' }}>
+            {WALLETS.map((w) => (
+              <div key={w} style={{ flex: 1, backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '10px' }}>
+                <div style={{ fontSize: '11px', color: '#8a8a92', marginBottom: '4px' }}>{w}</div>
+                <div className="dz-mono" style={{ fontSize: '14px', fontWeight: 600, color: walletBalances[w] >= 0 ? '#eae6df' : '#e2574c' }}>
+                  {formatCOP(walletBalances[w] || 0)}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 10px', backgroundColor: 'rgba(232,163,61,0.08)', border: '1px solid #e8a33d', borderRadius: '6px' }}>
+            <span className="dz-mono" style={{ fontSize: '11px', color: '#e8a33d', letterSpacing: '0.06em' }}>TOTAL COMBINADO</span>
+            <span className="dz-mono" style={{ fontSize: '15px', fontWeight: 700, color: '#e8a33d' }}>
+              {formatCOP(Object.values(walletBalances).reduce((a, b) => a + b, 0))}
+            </span>
+          </div>
+        </div>
+
+        {expenseByCategory.length > 0 && (
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>GASTOS POR CANAL — {periodLabel.toUpperCase()}</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {expenseByCategory.map(([label, val]) => {
+                const pct = maxCatValue > 0 ? (val / maxCatValue) * 100 : 0;
+                return (
+                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <div style={{ width: '90px', fontSize: '12px', color: '#c9c5bd' }}>{label}</div>
+                    <div style={{ flex: 1, height: '5px', backgroundColor: '#232328', borderRadius: '3px', overflow: 'hidden' }}>
+                      <div style={{ width: `${pct}%`, height: '100%', backgroundColor: '#e2574c', borderRadius: '3px' }} />
+                    </div>
+                    <div className="dz-mono" style={{ width: '78px', textAlign: 'right', fontSize: '12px', color: '#8a8a92' }}>{formatCOP(val)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="dz-scroll" style={{ padding: '14px 12px 20px', maxHeight: '420px', overflowY: 'auto' }}>
+          <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', padding: '0 8px 8px' }}>PISTAS · {periodLabel.toUpperCase()}</div>
+          {monthTx.length === 0 ? (
+            <div style={{ padding: '24px 8px', color: '#6d6d75', fontSize: '13px' }}>Aún no hay registros. Agrega el primero arriba.</div>
+          ) : (
+            monthTx.slice(0, 150).map((t) => {
+              const meta = categoryMeta(t.category);
+              const color = t.type === 'ingreso' ? '#3ea8a0' : t.type === 'extra' ? '#e8a33d' : '#e2574c';
+              const sign = t.type === 'ingreso' ? '+' : t.type === 'extra' ? (t.amount < 0 ? '−' : '±') : '−';
+              return (
+                <div key={t.id} className="dz-chan" style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 8px', borderRadius: '6px' }}>
+                  <div style={{ width: '30px', height: '30px', borderRadius: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    backgroundColor: color + '1f', flexShrink: 0, fontSize: '14px' }}>
+                    {meta.icon}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: '13px', color: '#eae6df', fontWeight: 500 }}>{(t.categoryLabel || meta.label)} · {t.wallet}{t.note ? ` · ${t.note}` : ''}</div>
+                    <div className="dz-mono" style={{ fontSize: '11px', color: '#6d6d75' }}>{t.date}</div>
+                  </div>
+                  <div className="dz-mono" style={{ fontSize: '13px', fontWeight: 600, color, whiteSpace: 'nowrap' }}>
+                    {sign}{formatCOP(Math.abs(t.amount))}
+                  </div>
+                  <button onClick={() => handleDelete(t.id)} aria-label="Eliminar" className="dz-btn"
+                    style={{ background: 'none', border: 'none', color: '#4a4a52', cursor: 'pointer', padding: '4px', fontSize: '14px' }}>
+                    🗑
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function FinanzasApp() {
+  return (
+    <ErrorBoundary>
+      <FinanzasAppInner />
+    </ErrorBoundary>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<FinanzasApp />);
+</script>
+</body>
+</html>
