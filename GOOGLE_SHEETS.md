@@ -1,6 +1,6 @@
-# Google Sheets como base de datos compartida
+# Integración anterior de Apps Script
 
-La app original guardaba los movimientos en el almacenamiento local del navegador. Por eso el PC y el celular no veían los mismos datos. Con el archivo `google-apps-script/Code.gs`, tu Sheet pasa a ser la fuente de datos compartida.
+Este método ya no se usa. La aplicación actual se conecta mediante una función privada de Vercel; sigue las instrucciones de `VERCEL_GOOGLE_SHEETS.md`.
 
 ## Configuración (una sola vez)
 

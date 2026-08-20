@@ -424,10 +424,6 @@ function FinanzasAppInner() {
               <span className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.06em', color: syncStatus === 'failed' ? '#e2574c' : syncStatus === 'sending' ? '#e8a33d' : '#3ea8a0' }}>
                 {syncStatus === 'sending' ? 'SINCRONIZANDO…' : syncStatus === 'failed' ? 'ERROR DE CONEXIÓN' : 'SHEETS ✓'}
               </span>
-              <button onClick={() => pullNow()} className="dz-btn"
-                style={{ background: 'none', border: 'none', color: '#6d6d75', cursor: 'pointer', fontSize: '16px', padding: '4px' }} aria-label="Sincronizar">
-                🔄
-              </button>
             </div>
           </div>
 
@@ -465,7 +461,7 @@ function FinanzasAppInner() {
               </div>
               <div style={{ fontSize: '11px', color: '#6d6d75', marginTop: '8px' }}>Pega aquí la URL /exec que te dio Apps Script. Cada registro nuevo se enviará automáticamente.</div>
 
-              {SHEETS_API_URL === '' && (
+              {false && (
                 <div style={{ fontSize: '11px', color: '#e8a33d', marginTop: '8px' }}>
                   Consejo: añade esta URL también en SHEETS_API_URL dentro de index.html y publícala en Vercel; así quedará configurada en todos tus dispositivos.
                 </div>
