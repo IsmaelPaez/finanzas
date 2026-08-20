@@ -107,6 +107,20 @@ function parseTipo(raw) {
   return 'gasto'; // Egreso y cualquier otro caso
 }
 
+function pullFromSheetsJSONP(url) {
+  return new Promise((resolve, reject) => {
+    const cbName = 'dzPullCb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
+    const script = document.createElement('script');
+    const cleanup = () => { delete window[cbName]; script.remove(); };
+    window[cbName] = (data) => { resolve(data); cleanup(); };
+    script.onerror = () => { reject(new Error('No se pudo conectar con Sheets.')); cleanup(); };
+    const sep = url.indexOf('?') === -1 ? '?' : '&';
+    script.src = url + sep + 'callback=' + cbName;
+    document.body.appendChild(script);
+    setTimeout(() => { if (window[cbName]) { reject(new Error('Tiempo de espera agotado.')); cleanup(); } }, 15000);
+  });
+}
+
 function parseAndMapRows(rows, existingKeys) {
   const imported = [];
   let skippedBadRow = 0;
@@ -215,6 +229,35 @@ function FinanzasAppInner() {
   const [importMsg, setImportMsg] = useState('');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
+
+  useEffect(() => {
+    if (sheetsUrl) { pullNow(); }
+    // eslint-disable-next-line
+  }, []); // solo al abrir la app
+
+  function pullNow() {
+    if (!sheetsUrl) return;
+    setImportStatus('loading');
+    setImportMsg('');
+    pullFromSheetsJSONP(sheetsUrl)
+      .then((objRows) => {
+        if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Sheets.');
+        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel]);
+        setTransactions((prev) => {
+          const existingKeys = new Set(prev.map((t) => `${t.date}|${t.amount}|${t.note}|${t.type}|${t.wallet}`));
+          const { imported } = parseAndMapRows(rows, existingKeys);
+          if (imported.length === 0) return prev;
+          return [...imported, ...prev];
+        });
+        setImportStatus('done');
+        setImportMsg('Sincronizado con Sheets.');
+        setTimeout(() => setImportStatus('idle'), 2500);
+      })
+      .catch((e) => {
+        setImportStatus('error');
+        setImportMsg('No se pudo sincronizar automáticamente: ' + (e.message || ''));
+      });
+  }
 
   function handleTypeChange(next) {
     setType(next);
@@ -423,6 +466,14 @@ function FinanzasAppInner() {
                   style={{ padding: '9px 14px', borderRadius: '6px', border: '1px solid #2a2a30', background: 'none', color: '#8a8a92', cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ fontSize: '11px', color: '#6d6d75', marginTop: '8px' }}>Pega aquí la URL /exec que te dio Apps Script. Cada registro nuevo se enviará automáticamente.</div>
+
+              {sheetsUrl && (
+                <button type="button" onClick={pullNow} disabled={importStatus === 'loading'} className="dz-btn"
+                  style={{ width: '100%', marginTop: '10px', padding: '9px', borderRadius: '6px', border: '1px solid #3ea8a0', background: 'rgba(62,168,160,0.1)',
+                    color: '#3ea8a0', fontSize: '13px', fontWeight: 600, cursor: importStatus === 'loading' ? 'default' : 'pointer' }}>
+                  {importStatus === 'loading' ? 'Sincronizando…' : '🔄 Sincronizar ahora'}
+                </button>
+              )}
 
               <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #2a2a30' }}>
                 <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.08em', marginBottom: '8px' }}>IMPORTAR HISTORIAL (PEGA TUS DATOS)</div>
