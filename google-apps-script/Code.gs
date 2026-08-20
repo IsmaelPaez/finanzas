@@ -14,6 +14,13 @@ const SPREADSHEET_ID = 'PEGA_AQUI_EL_ID_DE_TU_GOOGLE_SHEET';
 const SHEET_NAME = 'movimientos';
 const HEADERS = ['id', 'date', 'note', 'amount', 'type', 'wallet', 'categoryLabel'];
 
+function amount_(value) {
+  // Los montos colombianos suelen llegar como "$1.234.567" desde
+  // getDisplayValues(); quitamos separadores antes de convertirlos.
+  const digits = String(value || '').replace(/[^0-9-]/g, '');
+  return Number(digits) || 0;
+}
+
 function sheet_() {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
   let sheet = ss.getSheetByName(SHEET_NAME);
@@ -28,20 +35,22 @@ function records_() {
   if (values.length < 2) return [];
   const indexes = {};
   values[0].forEach((header, index) => indexes[String(header).trim().toLowerCase()] = index);
-  const cell = (row, names, fallback) => {
+  const cell = (row, names, fallback, legacyColumn) => {
     const index = names.map(name => indexes[name]).find(index => index !== undefined);
-    return index === undefined ? fallback : row[index];
+    // El fallback por posición permite leer el historial aunque los títulos
+    // tengan nombres distintos (por ejemplo "Detalle" en lugar de "Nota").
+    return index === undefined ? (row[legacyColumn] === undefined ? fallback : row[legacyColumn]) : row[index];
   };
   return values.slice(1).filter(row => row.some(value => value !== '')).map((row, index) => ({
     // También acepta las columnas antiguas en español: Fecha, Nota, Monto,
     // Tipo, Cuenta y Categoría. No tienes que migrar el historial primero.
-    id: cell(row, ['id'], `hist-${index + 2}`),
-    date: cell(row, ['date', 'fecha'], ''),
-    note: cell(row, ['note', 'nota', 'descripción', 'descripcion'], ''),
-    amount: Number(String(cell(row, ['amount', 'monto', 'valor'], 0)).replace(/[^0-9.-]/g, '')) || 0,
-    type: cell(row, ['type', 'tipo'], 'gasto'),
-    wallet: cell(row, ['wallet', 'cuenta', 'billetera'], 'Nequi'),
-    categoryLabel: cell(row, ['categorylabel', 'categoría', 'categoria'], 'Otros'),
+    id: cell(row, ['id'], `hist-${index + 2}`, -1),
+    date: cell(row, ['date', 'fecha', 'día', 'dia'], '', 0),
+    note: cell(row, ['note', 'nota', 'descripción', 'descripcion', 'detalle', 'concepto'], '', 1),
+    amount: amount_(cell(row, ['amount', 'monto', 'valor', 'cantidad'], 0, 2)),
+    type: cell(row, ['type', 'tipo', 'clase'], 'gasto', 3),
+    wallet: cell(row, ['wallet', 'cuenta', 'billetera', 'medio de pago'], 'Nequi', 4),
+    categoryLabel: cell(row, ['categorylabel', 'categoría', 'categoria', 'categoría / canal', 'categoria / canal'], 'Otros', 5),
   }));
 }
 
