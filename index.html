@@ -28,6 +28,21 @@
   .dz-btn:active { transform: scale(0.97); }
   input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; }
   button { font-family: inherit; }
+  .dz-top { padding-top: max(20px, calc(env(safe-area-inset-top) + 16px)) !important; }
+  .dz-balance-row { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 12px; }
+  .dz-balance-stats { display: flex; gap: 16px; }
+  .dz-category-row { display: flex; align-items: center; gap: 8px; }
+  .dz-category-label { width: 115px; flex-shrink: 0; font-size: 12px; color: #c9c5bd; }
+  .dz-category-bar { flex: 1; height: 5px; background-color: #232328; border-radius: 3px; overflow: hidden; }
+  .dz-category-value { width: 78px; flex-shrink: 0; text-align: right; font-size: 12px; color: #8a8a92; }
+  @media (max-width: 420px) {
+    .dz-top { padding-top: max(56px, calc(env(safe-area-inset-top) + 16px)) !important; }
+    .dz-balance-row { flex-direction: column; align-items: stretch; gap: 14px; }
+    .dz-balance-stats { justify-content: space-between; gap: 8px; }
+    .dz-balance-stats > div { flex: 1; text-align: left !important; }
+    .dz-category-label { width: 115px; }
+    .dz-category-value { width: 76px; }
+  }
 </style>
 </head>
 <body>
@@ -419,7 +434,7 @@ function FinanzasAppInner() {
     <div style={{ backgroundColor: '#17171b', color: '#eae6df', minHeight: '100vh' }}>
       <div style={{ maxWidth: '480px', margin: '0 auto', paddingBottom: '40px' }}>
 
-        <div style={{ borderBottom: '1px solid #2a2a30', padding: '20px 20px 18px' }}>
+        <div className="dz-top" style={{ borderBottom: '1px solid #2a2a30', padding: '20px 20px 18px' }}>
           <div className="flex items-center justify-between mb-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
             <div className="dz-mono" style={{ fontSize: '11px', letterSpacing: '0.14em', color: '#8a8a92', textTransform: 'uppercase' }}>Sesión activa</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
@@ -522,14 +537,14 @@ function FinanzasAppInner() {
           )}
 
           {activeTab === 'resumen' && <div style={{ backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '16px' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '12px' }}>
+            <div className="dz-balance-row">
               <div>
                 <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em' }}>BALANCE — {viewMode === 'month' ? 'MES' : 'AÑO'}</div>
                 <div className="dz-display dz-mono" style={{ fontSize: '30px', fontWeight: 700, color: totals.balance >= 0 ? '#3ea8a0' : '#e2574c', lineHeight: 1.1 }}>
                   {formatCOP(totals.balance)}
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '16px' }}>
+              <div className="dz-balance-stats">
                 <div style={{ textAlign: 'right' }}>
                   <div className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.08em', color: '#3ea8a0' }}>↑ INGRESOS</div>
                   <div className="dz-mono" style={{ fontSize: '14px', color: '#c9c5bd' }}>{formatCOP(totals.ingresos)}</div>
@@ -636,12 +651,12 @@ function FinanzasAppInner() {
               {expenseByCategory.map(([label, val]) => {
                 const pct = maxCatValue > 0 ? (val / maxCatValue) * 100 : 0;
                 return (
-                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <div style={{ width: '90px', fontSize: '12px', color: '#c9c5bd' }}>{label}</div>
-                    <div style={{ flex: 1, height: '5px', backgroundColor: '#232328', borderRadius: '3px', overflow: 'hidden' }}>
+                  <div key={label} className="dz-category-row">
+                    <div className="dz-category-label">{label}</div>
+                    <div className="dz-category-bar">
                       <div style={{ width: `${pct}%`, height: '100%', backgroundColor: '#e2574c', borderRadius: '3px' }} />
                     </div>
-                    <div className="dz-mono" style={{ width: '78px', textAlign: 'right', fontSize: '12px', color: '#8a8a92' }}>{formatCOP(val)}</div>
+                    <div className="dz-mono dz-category-value">{formatCOP(val)}</div>
                   </div>
                 );
               })}
