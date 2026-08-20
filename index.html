@@ -503,7 +503,7 @@ function FinanzasAppInner() {
               )}
 
               {sheetsUrl && (
-                <button type="button" onClick={pullNow} disabled={importStatus === 'loading'} className="dz-btn"
+                <button type="button" onClick={() => pullNow()} disabled={importStatus === 'loading'} className="dz-btn"
                   style={{ width: '100%', marginTop: '10px', padding: '9px', borderRadius: '6px', border: '1px solid #3ea8a0', background: 'rgba(62,168,160,0.1)',
                     color: '#3ea8a0', fontSize: '13px', fontWeight: 600, cursor: importStatus === 'loading' ? 'default' : 'pointer' }}>
                   {importStatus === 'loading' ? 'Sincronizando…' : '🔄 Sincronizar ahora'}

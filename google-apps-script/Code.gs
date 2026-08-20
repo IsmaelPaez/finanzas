@@ -29,22 +29,32 @@ function sheet_() {
   return sheet;
 }
 
+function hasHeaders_(row) {
+  const known = ['id', 'date', 'fecha', 'note', 'nota', 'descripción', 'descripcion', 'detalle',
+    'amount', 'monto', 'valor', 'type', 'tipo', 'wallet', 'cuenta', 'billetera',
+    'categorylabel', 'categoría', 'categoria'];
+  return row.some(value => known.indexOf(String(value).trim().toLowerCase()) !== -1);
+}
+
 function records_() {
   const sheet = sheet_();
   const values = sheet.getDataRange().getDisplayValues();
-  if (values.length < 2) return [];
+  if (values.length === 0) return [];
+  const headersPresent = hasHeaders_(values[0]);
   const indexes = {};
-  values[0].forEach((header, index) => indexes[String(header).trim().toLowerCase()] = index);
+  if (headersPresent) values[0].forEach((header, index) => indexes[String(header).trim().toLowerCase()] = index);
   const cell = (row, names, fallback, legacyColumn) => {
     const index = names.map(name => indexes[name]).find(index => index !== undefined);
     // El fallback por posición permite leer el historial aunque los títulos
     // tengan nombres distintos (por ejemplo "Detalle" en lugar de "Nota").
     return index === undefined ? (row[legacyColumn] === undefined ? fallback : row[legacyColumn]) : row[index];
   };
-  return values.slice(1).filter(row => row.some(value => value !== '')).map((row, index) => ({
+  const dataRows = headersPresent ? values.slice(1) : values;
+  const rowOffset = headersPresent ? 2 : 1;
+  return dataRows.filter(row => row.some(value => value !== '')).map((row, index) => ({
     // También acepta las columnas antiguas en español: Fecha, Nota, Monto,
     // Tipo, Cuenta y Categoría. No tienes que migrar el historial primero.
-    id: cell(row, ['id'], `hist-${index + 2}`, -1),
+    id: cell(row, ['id'], `hist-${index + rowOffset}`, -1),
     date: cell(row, ['date', 'fecha', 'día', 'dia'], '', 0),
     note: cell(row, ['note', 'nota', 'descripción', 'descripcion', 'detalle', 'concepto'], '', 1),
     amount: amount_(cell(row, ['amount', 'monto', 'valor', 'cantidad'], 0, 2)),
@@ -56,7 +66,12 @@ function records_() {
 
 function appendRecord_(tx) {
   const sheet = sheet_();
-  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0]
+  const firstRow = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getDisplayValues()[0];
+  if (!hasHeaders_(firstRow)) {
+    sheet.appendRow([tx.date, tx.note || '', Number(tx.amount), tx.type, tx.wallet, tx.categoryLabel]);
+    return;
+  }
+  const headers = firstRow
     .map(header => String(header).trim().toLowerCase());
   const fields = {
     id: tx.id, date: tx.date, fecha: tx.date,
@@ -74,10 +89,12 @@ function appendRecord_(tx) {
 function deleteRecord_(id) {
   const sheet = sheet_();
   const values = sheet.getDataRange().getDisplayValues();
+  const headersPresent = values.length > 0 && hasHeaders_(values[0]);
   const indexes = {};
-  values[0].forEach((header, index) => indexes[String(header).trim().toLowerCase()] = index);
+  if (headersPresent) values[0].forEach((header, index) => indexes[String(header).trim().toLowerCase()] = index);
   const idColumn = indexes.id;
-  for (let row = 1; row < values.length; row++) {
+  const firstDataRow = headersPresent ? 1 : 0;
+  for (let row = firstDataRow; row < values.length; row++) {
     const currentId = idColumn === undefined ? `hist-${row + 1}` : values[row][idColumn];
     if (String(currentId) === String(id)) {
       sheet.deleteRow(row + 1);
