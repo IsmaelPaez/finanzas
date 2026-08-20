@@ -55,6 +55,7 @@ const { useState, useEffect, useMemo } = React;
 // de Google se guardan como variables privadas de Vercel.
 const MOVEMENTS_API_URL = '/api/movements';
 const BUDGETS_API_URL = '/api/budgets';
+const OPENING_BALANCES_API_URL = '/api/opening-balances';
 
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
@@ -236,12 +237,16 @@ function FinanzasAppInner() {
   const [budgets, setBudgets] = useState([]);
   const [budgetCategory, setBudgetCategory] = useState(EXPENSE_CATEGORIES[0].label);
   const [budgetAmount, setBudgetAmount] = useState('');
+  const [openingBalances, setOpeningBalances] = useState([]);
+  const [openingWallet, setOpeningWallet] = useState(WALLETS[0]);
+  const [openingAmount, setOpeningAmount] = useState('');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
   useEffect(() => {
     pullNow();
     pullBudgets();
+    pullOpeningBalances();
     // eslint-disable-next-line
   }, []); // solo al abrir la app
 
@@ -260,6 +265,21 @@ function FinanzasAppInner() {
     if (!limit || limit < 0) return;
     const response = await fetch(BUDGETS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ category: budgetCategory, limit }) });
     if (response.ok) { setBudgetAmount(''); pullBudgets(); }
+  }
+
+  async function pullOpeningBalances() {
+    try {
+      const response = await fetch(OPENING_BALANCES_API_URL);
+      const data = await response.json();
+      if (response.ok) setOpeningBalances(data);
+    } catch (e) { console.warn(e); }
+  }
+
+  async function saveOpeningBalance(e) {
+    e.preventDefault();
+    if (openingAmount === '') return;
+    const response = await fetch(OPENING_BALANCES_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet: openingWallet, amount: Number(openingAmount) }) });
+    if (response.ok) { setOpeningAmount(''); pullOpeningBalances(); }
   }
 
   async function deleteBudget(row) {
@@ -507,7 +527,7 @@ function FinanzasAppInner() {
 
   const walletBalances = useMemo(() => {
     const map = {};
-    for (const w of WALLETS) map[w] = 0;
+    for (const w of WALLETS) map[w] = openingBalances.find((b) => b.wallet === w)?.amount || 0;
     for (const t of transactions) {
       const w = t.wallet || WALLETS[0];
       if (!(w in map)) map[w] = 0;
@@ -515,7 +535,7 @@ function FinanzasAppInner() {
       else if (t.type === 'egreso') map[w] -= t.amount;
     }
     return map;
-  }, [transactions]);
+  }, [transactions, openingBalances]);
 
   const maxCatValue = expenseByCategory.length ? expenseByCategory[0][1] : 0;
   const categories = type === 'ingreso' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
@@ -556,7 +576,7 @@ function FinanzasAppInner() {
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
-            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos']].map(([id, label]) => (
+            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas']].map(([id, label]) => (
               <button key={id} type="button" onClick={() => setActiveTab(id)} className="dz-btn"
                 style={{ flex: '1 1 30%', padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
                   backgroundColor: activeTab === id ? 'rgba(232,163,61,0.12)' : '#0f0f12', color: activeTab === id ? '#e8a33d' : '#8a8a92', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
@@ -812,6 +832,22 @@ function FinanzasAppInner() {
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', fontSize: '13px' }}><span>{budget.category}</span><span className="dz-mono" style={{ color: '#8a8a92' }}>{formatCOP(spent)} / {formatCOP(budget.limit)}</span><button onClick={() => deleteBudget(budget.row)} style={{ border: 'none', background: 'none', color: '#e2574c', cursor: 'pointer' }}>×</button></div>
                 <div style={{ height: '5px', marginTop: '7px', backgroundColor: '#232328', borderRadius: '3px' }}><div style={{ width: `${percent}%`, height: '100%', backgroundColor: color, borderRadius: '3px' }} /></div>
               </div>;
+            })}
+          </div>
+        )}
+
+        {activeTab === 'cuentas' && (
+          <div style={{ padding: '18px 20px' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '8px' }}>SALDOS INICIALES</div>
+            <div style={{ color: '#8a8a92', fontSize: '12px', marginBottom: '12px' }}>Se suman una sola vez al historial para calcular el saldo actual de cada cuenta.</div>
+            <form onSubmit={saveOpeningBalance} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
+              <select value={openingWallet} onChange={(e) => setOpeningWallet(e.target.value)} style={{ flex: 1, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }}>{WALLETS.map(w => <option key={w}>{w}</option>)}</select>
+              <input type="number" inputMode="numeric" value={openingAmount} onChange={(e) => setOpeningAmount(e.target.value)} placeholder="$ saldo" style={{ width: '110px', padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <button className="dz-btn" style={{ border: 'none', borderRadius: '6px', padding: '0 12px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>Guardar</button>
+            </form>
+            {WALLETS.map((w) => {
+              const opening = openingBalances.find(b => b.wallet === w)?.amount || 0;
+              return <div key={w} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #2a2a30' }}><span>{w}</span><span className="dz-mono" style={{ color: '#8a8a92' }}>Inicial {formatCOP(opening)} · Actual <b style={{ color: '#eae6df' }}>{formatCOP(walletBalances[w])}</b></span></div>;
             })}
           </div>
         )}
