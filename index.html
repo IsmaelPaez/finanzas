@@ -35,10 +35,9 @@
 
 const { useState, useEffect, useMemo } = React;
 
-// Pega aquí la URL /exec de tu Apps Script después de desplegarlo. Al dejarla
-// en el código, todos los dispositivos usan la misma base de datos sin tener
-// que configurarla uno por uno. La URL no contiene datos privados del Sheet.
-const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbxZhBUKeRh5Okz2-i5d1uRD_KuSgjTuw5tjhEXB3KKzrauVtltxQd_ivoW2yKn7Nyl-ow/exec';
+// La API corre en Vercel, en el mismo dominio de la página. Las credenciales
+// de Google se guardan como variables privadas de Vercel.
+const MOVEMENTS_API_URL = '/api/movements';
 
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
@@ -110,20 +109,6 @@ function parseTipo(raw) {
   if (s.startsWith('ingreso')) return 'ingreso';
   if (s.startsWith('extra')) return 'extra';
   return 'gasto'; // Egreso y cualquier otro caso
-}
-
-function pullFromSheetsJSONP(url) {
-  return new Promise((resolve, reject) => {
-    const cbName = 'dzPullCb_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8);
-    const script = document.createElement('script');
-    const cleanup = () => { delete window[cbName]; script.remove(); };
-    window[cbName] = (data) => { resolve(data); cleanup(); };
-    script.onerror = () => { reject(new Error('No se pudo conectar con Sheets.')); cleanup(); };
-    const sep = url.indexOf('?') === -1 ? '?' : '&';
-    script.src = url + sep + 'callback=' + cbName;
-    document.body.appendChild(script);
-    setTimeout(() => { if (window[cbName]) { reject(new Error('Tiempo de espera agotado.')); cleanup(); } }, 15000);
-  });
 }
 
 function parseAndMapRows(rows, existingKeys) {
@@ -219,7 +204,6 @@ class ErrorBoundary extends React.Component {
 
 function FinanzasAppInner() {
   const [transactions, setTransactions] = useState(() => loadJSON('dz_transactions', []));
-  const [sheetsUrl, setSheetsUrl] = useState(() => loadJSON('dz_sheets_url', SHEETS_API_URL));
   const [pastedData, setPastedData] = useState('');
   const [type, setType] = useState('gasto');
   const [amount, setAmount] = useState('');
@@ -227,8 +211,6 @@ function FinanzasAppInner() {
   const [wallet, setWallet] = useState(WALLETS[0]);
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
-  const [showSettings, setShowSettings] = useState(false);
-  const [urlDraft, setUrlDraft] = useState('');
   const [syncStatus, setSyncStatus] = useState('idle');
   const [importStatus, setImportStatus] = useState('idle'); // idle | loading | done | error
   const [importMsg, setImportMsg] = useState('');
@@ -236,20 +218,19 @@ function FinanzasAppInner() {
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
   useEffect(() => {
-    // La configuración publicada tiene prioridad sobre una URL antigua que
-    // hubiese quedado guardada solo en un navegador.
-    if (SHEETS_API_URL && sheetsUrl !== SHEETS_API_URL) setSheetsUrl(SHEETS_API_URL);
-    if (SHEETS_API_URL || sheetsUrl) { pullNow(SHEETS_API_URL || sheetsUrl); }
+    pullNow();
     // eslint-disable-next-line
   }, []); // solo al abrir la app
 
-  function pullNow(endpoint = sheetsUrl) {
-    if (!endpoint) return;
+  async function pullNow() {
     setImportStatus('loading');
     setImportMsg('');
-    pullFromSheetsJSONP(endpoint)
-      .then((objRows) => {
-        if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Sheets.');
+    setSyncStatus('sending');
+    try {
+      const response = await fetch(MOVEMENTS_API_URL);
+      const objRows = await response.json();
+      if (!response.ok) throw new Error(objRows.error || 'No se pudo leer Google Sheets.');
+      if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
         const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel]);
         setTransactions((prev) => {
           const existingKeys = new Set(prev.map((t) => `${t.date}|${t.amount}|${t.note}|${t.type}|${t.wallet}`));
@@ -260,11 +241,12 @@ function FinanzasAppInner() {
         setImportStatus('done');
         setImportMsg('Sincronizado con Sheets.');
         setTimeout(() => setImportStatus('idle'), 2500);
-      })
-      .catch((e) => {
-        setImportStatus('error');
-        setImportMsg('No se pudo sincronizar automáticamente: ' + (e.message || ''));
-      });
+        setSyncStatus('sent');
+    } catch (e) {
+      setImportStatus('error');
+      setImportMsg('No se pudo sincronizar automáticamente: ' + (e.message || ''));
+      setSyncStatus('failed');
+    }
   }
 
   function handleTypeChange(next) {
@@ -272,43 +254,31 @@ function FinanzasAppInner() {
     setCategory(next === 'ingreso' ? INCOME_CATEGORIES[0].id : EXPENSE_CATEGORIES[0].id);
   }
 
-  function saveSheetsUrl() {
-    const trimmed = urlDraft.trim();
-    setSheetsUrl(trimmed);
-    saveJSON('dz_sheets_url', trimmed);
-    setShowSettings(false);
-  }
-
   async function syncToSheets(tx) {
-    if (!sheetsUrl) return;
     setSyncStatus('sending');
     try {
-      await fetch(sheetsUrl, {
+      const response = await fetch(MOVEMENTS_API_URL, {
         method: 'POST',
-        mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(tx),
       });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'No se pudo guardar el movimiento.');
       setSyncStatus('sent');
-      // El POST con Apps Script no permite leer la respuesta desde otro
-      // dominio. Recargamos desde la fuente compartida para confirmar y
-      // obtener también lo creado desde el móvil u otro navegador.
       setTimeout(() => pullNow(), 700);
-      setTimeout(() => setSyncStatus('idle'), 2000);
     } catch (e) {
       setSyncStatus('failed');
-      setTimeout(() => setSyncStatus('idle'), 3000);
+      setImportMsg(e.message || 'No se pudo guardar el movimiento.');
     }
   }
 
-  async function deleteFromSheets(id) {
-    if (!sheetsUrl) return;
+  async function deleteFromSheets(tx) {
     try {
-      await fetch(sheetsUrl, {
-        method: 'POST', mode: 'no-cors',
-        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action: 'delete', id }),
+      const response = await fetch(MOVEMENTS_API_URL, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tx),
       });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'No se pudo eliminar el movimiento.');
       setTimeout(() => pullNow(), 700);
     } catch (e) {
       // La copia local se elimina igualmente; la próxima sincronización puede
@@ -337,8 +307,9 @@ function FinanzasAppInner() {
   }
 
   function handleDelete(id) {
+    const tx = transactions.find((t) => t.id === id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
-    deleteFromSheets(id);
+    if (tx) deleteFromSheets(tx);
   }
 
   function handleResetAll() {
@@ -450,14 +421,12 @@ function FinanzasAppInner() {
           <div className="flex items-center justify-between mb-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
             <div className="dz-mono" style={{ fontSize: '11px', letterSpacing: '0.14em', color: '#8a8a92', textTransform: 'uppercase' }}>Sesión activa</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              {sheetsUrl && (
-                <span className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.06em', color: syncStatus === 'failed' ? '#e2574c' : syncStatus === 'sending' ? '#e8a33d' : '#3ea8a0' }}>
-                  {syncStatus === 'sending' ? 'ENVIANDO…' : syncStatus === 'failed' ? 'SIN CONEXIÓN' : 'SHEETS ✓'}
-                </span>
-              )}
-              <button onClick={() => { setUrlDraft(sheetsUrl); setShowSettings((s) => !s); }} className="dz-btn"
-                style={{ background: 'none', border: 'none', color: '#6d6d75', cursor: 'pointer', fontSize: '16px', padding: '4px' }} aria-label="Ajustes">
-                ⚙️
+              <span className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.06em', color: syncStatus === 'failed' ? '#e2574c' : syncStatus === 'sending' ? '#e8a33d' : '#3ea8a0' }}>
+                {syncStatus === 'sending' ? 'SINCRONIZANDO…' : syncStatus === 'failed' ? 'ERROR DE CONEXIÓN' : 'SHEETS ✓'}
+              </span>
+              <button onClick={() => pullNow()} className="dz-btn"
+                style={{ background: 'none', border: 'none', color: '#6d6d75', cursor: 'pointer', fontSize: '16px', padding: '4px' }} aria-label="Sincronizar">
+                🔄
               </button>
             </div>
           </div>
@@ -482,7 +451,7 @@ function FinanzasAppInner() {
             </div>
           </div>
 
-          {showSettings && (
+          {false && (
             <div style={{ backgroundColor: '#0f0f12', border: '1px solid #2a2a30', borderRadius: '8px', padding: '12px', marginBottom: '12px' }}>
               <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.08em', marginBottom: '8px' }}>URL DE GOOGLE SHEETS (APPS SCRIPT)</div>
               <div style={{ display: 'flex', gap: '8px' }}>
