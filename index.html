@@ -118,7 +118,9 @@ function parseAndMapRows(rows, existingKeys) {
     if (!r || r.length < 6 || !r[0]) { skippedBadRow++; continue; }
     const rawDate = String(r[0]).trim();
     let dateStr = rawDate;
-    const dmY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(rawDate);
+    // Sheets puede devolver "10/08/2026 17:30:03". La hora no cambia el
+    // período contable, por lo que la normalizamos a una fecha ISO.
+    const dmY = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+.*)?$/.exec(rawDate);
     if (dmY) dateStr = `${dmY[3]}-${dmY[2].padStart(2, '0')}-${dmY[1].padStart(2, '0')}`;
     const txType = parseTipo(r[3]);
     const amountNum = parseAmountCOP(r[2]);

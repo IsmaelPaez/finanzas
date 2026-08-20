@@ -18,7 +18,8 @@ function sheetsClient() {
 
 function asDate(value) {
   const raw = String(value || '').trim();
-  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(raw);
+  // Google Sheets devuelve fechas con hora para algunos registros históricos.
+  const match = /^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+.*)?$/.exec(raw);
   return match ? `${match[3]}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}` : raw;
 }
 
