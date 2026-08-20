@@ -429,19 +429,44 @@ function FinanzasAppInner() {
     [transactions, periodKeyStr, viewMode]
   );
 
+  const previousPeriodKey = useMemo(() => {
+    const d = new Date(periodDate);
+    if (viewMode === 'month') d.setMonth(d.getMonth() - 1);
+    else d.setFullYear(d.getFullYear() - 1);
+    return viewMode === 'month'
+      ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+      : `${d.getFullYear()}`;
+  }, [periodDate, viewMode]);
+
+  const previousTx = useMemo(
+    () => transactions.filter((t) => (viewMode === 'month' ? t.date.slice(0, 7) : t.date.slice(0, 4)) === previousPeriodKey),
+    [transactions, previousPeriodKey, viewMode]
+  );
+
   function isMovimiento(t) {
     const label = (t.categoryLabel || categoryMeta(t.category).label || '').trim().toLowerCase();
     return label === MOVIMIENTOS_LABEL;
   }
 
-  const totals = useMemo(() => {
+  function calculateTotals(list) {
     let ingresos = 0, gastos = 0;
-    for (const t of monthTx) {
+    for (const t of list) {
       if (isMovimiento(t)) continue;
       if (t.type === 'ingreso') ingresos += t.amount; else gastos += t.amount;
     }
     return { ingresos, gastos, balance: ingresos - gastos };
-  }, [monthTx]);
+  }
+
+  const totals = useMemo(() => calculateTotals(monthTx), [monthTx]);
+  const previousTotals = useMemo(() => calculateTotals(previousTx), [previousTx]);
+
+  function trendChange(current, previous) {
+    if (previous === 0) return current === 0 ? null : null;
+    return Math.round(((current - previous) / Math.abs(previous)) * 100);
+  }
+
+  const incomeTrend = trendChange(totals.ingresos, previousTotals.ingresos);
+  const expenseTrend = trendChange(totals.gastos, previousTotals.gastos);
 
   const expenseByCategory = useMemo(() => {
     const map = {};
@@ -706,6 +731,38 @@ function FinanzasAppInner() {
                 );
               })}
             </div>
+          </div>
+        )}
+
+        {activeTab === 'resumen' && (
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid #2a2a30' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>
+              TENDENCIA VS. PERÍODO ANTERIOR
+            </div>
+            {previousTx.length === 0 ? (
+              <div style={{ color: '#6d6d75', fontSize: '12px' }}>Aún no hay datos del período anterior para comparar.</div>
+            ) : (
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <div style={{ flex: 1, padding: '10px', border: '1px solid #2a2a30', borderRadius: '8px', backgroundColor: '#0f0f12' }}>
+                  <div className="dz-mono" style={{ color: '#3ea8a0', fontSize: '10px' }}>INGRESOS</div>
+                  <div className="dz-mono" style={{ color: incomeTrend === null ? '#8a8a92' : incomeTrend >= 0 ? '#3ea8a0' : '#e2574c', fontSize: '17px', marginTop: '4px' }}>
+                    {incomeTrend === null ? '—' : `${incomeTrend >= 0 ? '+' : ''}${incomeTrend}%`}
+                  </div>
+                </div>
+                <div style={{ flex: 1, padding: '10px', border: '1px solid #2a2a30', borderRadius: '8px', backgroundColor: '#0f0f12' }}>
+                  <div className="dz-mono" style={{ color: '#e2574c', fontSize: '10px' }}>EGRESOS</div>
+                  <div className="dz-mono" style={{ color: expenseTrend === null ? '#8a8a92' : expenseTrend <= 0 ? '#3ea8a0' : '#e2574c', fontSize: '17px', marginTop: '4px' }}>
+                    {expenseTrend === null ? '—' : `${expenseTrend >= 0 ? '+' : ''}${expenseTrend}%`}
+                  </div>
+                </div>
+                <div style={{ flex: 1, padding: '10px', border: '1px solid #2a2a30', borderRadius: '8px', backgroundColor: '#0f0f12' }}>
+                  <div className="dz-mono" style={{ color: '#e8a33d', fontSize: '10px' }}>BALANCE</div>
+                  <div className="dz-mono" style={{ color: totals.balance >= previousTotals.balance ? '#3ea8a0' : '#e2574c', fontSize: '13px', marginTop: '6px', whiteSpace: 'nowrap' }}>
+                    {formatCOP(totals.balance - previousTotals.balance)}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
