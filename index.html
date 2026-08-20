@@ -35,6 +35,11 @@
 
 const { useState, useEffect, useMemo } = React;
 
+// Pega aquí la URL /exec de tu Apps Script después de desplegarlo. Al dejarla
+// en el código, todos los dispositivos usan la misma base de datos sin tener
+// que configurarla uno por uno. La URL no contiene datos privados del Sheet.
+const SHEETS_API_URL = 'https://script.google.com/macros/s/AKfycbxZhBUKeRh5Okz2-i5d1uRD_KuSgjTuw5tjhEXB3KKzrauVtltxQd_ivoW2yKn7Nyl-ow/exec';
+
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
   { id: 'otro_ingreso', label: 'Otros', icon: '•••' },
@@ -214,7 +219,7 @@ class ErrorBoundary extends React.Component {
 
 function FinanzasAppInner() {
   const [transactions, setTransactions] = useState(() => loadJSON('dz_transactions', []));
-  const [sheetsUrl, setSheetsUrl] = useState(() => loadJSON('dz_sheets_url', ''));
+  const [sheetsUrl, setSheetsUrl] = useState(() => loadJSON('dz_sheets_url', SHEETS_API_URL));
   const [pastedData, setPastedData] = useState('');
   const [type, setType] = useState('gasto');
   const [amount, setAmount] = useState('');
@@ -231,15 +236,18 @@ function FinanzasAppInner() {
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
   useEffect(() => {
-    if (sheetsUrl) { pullNow(); }
+    // La configuración publicada tiene prioridad sobre una URL antigua que
+    // hubiese quedado guardada solo en un navegador.
+    if (SHEETS_API_URL && sheetsUrl !== SHEETS_API_URL) setSheetsUrl(SHEETS_API_URL);
+    if (SHEETS_API_URL || sheetsUrl) { pullNow(SHEETS_API_URL || sheetsUrl); }
     // eslint-disable-next-line
   }, []); // solo al abrir la app
 
-  function pullNow() {
-    if (!sheetsUrl) return;
+  function pullNow(endpoint = sheetsUrl) {
+    if (!endpoint) return;
     setImportStatus('loading');
     setImportMsg('');
-    pullFromSheetsJSONP(sheetsUrl)
+    pullFromSheetsJSONP(endpoint)
       .then((objRows) => {
         if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Sheets.');
         const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel]);
@@ -282,10 +290,30 @@ function FinanzasAppInner() {
         body: JSON.stringify(tx),
       });
       setSyncStatus('sent');
+      // El POST con Apps Script no permite leer la respuesta desde otro
+      // dominio. Recargamos desde la fuente compartida para confirmar y
+      // obtener también lo creado desde el móvil u otro navegador.
+      setTimeout(() => pullNow(), 700);
       setTimeout(() => setSyncStatus('idle'), 2000);
     } catch (e) {
       setSyncStatus('failed');
       setTimeout(() => setSyncStatus('idle'), 3000);
+    }
+  }
+
+  async function deleteFromSheets(id) {
+    if (!sheetsUrl) return;
+    try {
+      await fetch(sheetsUrl, {
+        method: 'POST', mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+        body: JSON.stringify({ action: 'delete', id }),
+      });
+      setTimeout(() => pullNow(), 700);
+    } catch (e) {
+      // La copia local se elimina igualmente; la próxima sincronización puede
+      // restaurarlo si el dispositivo estaba sin conexión.
+      console.warn('No se pudo eliminar en Sheets:', e);
     }
   }
 
@@ -310,6 +338,7 @@ function FinanzasAppInner() {
 
   function handleDelete(id) {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+    deleteFromSheets(id);
   }
 
   function handleResetAll() {
@@ -466,6 +495,12 @@ function FinanzasAppInner() {
                   style={{ padding: '9px 14px', borderRadius: '6px', border: '1px solid #2a2a30', background: 'none', color: '#8a8a92', cursor: 'pointer' }}>✕</button>
               </div>
               <div style={{ fontSize: '11px', color: '#6d6d75', marginTop: '8px' }}>Pega aquí la URL /exec que te dio Apps Script. Cada registro nuevo se enviará automáticamente.</div>
+
+              {SHEETS_API_URL === '' && (
+                <div style={{ fontSize: '11px', color: '#e8a33d', marginTop: '8px' }}>
+                  Consejo: añade esta URL también en SHEETS_API_URL dentro de index.html y publícala en Vercel; así quedará configurada en todos tus dispositivos.
+                </div>
+              )}
 
               {sheetsUrl && (
                 <button type="button" onClick={pullNow} disabled={importStatus === 'loading'} className="dz-btn"
