@@ -11,13 +11,15 @@ async function ensure(sheets) {
   const book = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
   if (!book.data.sheets.some(s => s.properties.title === sheetName)) {
     await sheets.spreadsheets.batchUpdate({ spreadsheetId, requestBody: { requests: [{ addSheet: { properties: { title: sheetName } } }] } });
-    await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!A1:E1`, valueInputOption: 'RAW', requestBody: { values: [['id', 'name', 'originalAmount', 'initialPaid', 'active']] } });
+    await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!A1:J1`, valueInputOption: 'RAW', requestBody: { values: [['id', 'name', 'originalAmount', 'initialPaid', 'active', 'kind', 'dueDate', 'cutoffDay', 'paymentDay', 'createdAt']] } });
   }
+  // Asegura nuevas columnas también si la pestaña fue creada por una versión anterior.
+  await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!A1:J1`, valueInputOption: 'RAW', requestBody: { values: [['id', 'name', 'originalAmount', 'initialPaid', 'active', 'kind', 'dueDate', 'cutoffDay', 'paymentDay', 'createdAt']] } });
 }
 async function list(sheets) {
   await ensure(sheets);
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A2:E` });
-  return (response.data.values || []).filter(row => row[0] && row[1]).map((row, index) => ({ row: index + 2, id: String(row[0]), name: String(row[1]), originalAmount: Number(row[2]) || 0, initialPaid: Number(row[3]) || 0, active: String(row[4] || 'true') !== 'false' }));
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A2:J` });
+  return (response.data.values || []).filter(row => row[0] && row[1]).map((row, index) => ({ row: index + 2, id: String(row[0]), name: String(row[1]), originalAmount: Number(row[2]) || 0, initialPaid: Number(row[3]) || 0, active: String(row[4] || 'true') !== 'false', kind: String(row[5] || 'debt'), dueDate: String(row[6] || ''), cutoffDay: Number(row[7]) || 0, paymentDay: Number(row[8]) || 0 }));
 }
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
@@ -25,11 +27,11 @@ module.exports = async (req, res) => {
     const sheets = client();
     if (req.method === 'GET') return res.status(200).json(await list(sheets));
     if (req.method === 'POST') {
-      const { name, originalAmount, initialPaid = 0 } = req.body || {};
+      const { name, originalAmount, initialPaid = 0, kind = 'debt', dueDate = '', cutoffDay = 0, paymentDay = 0 } = req.body || {};
       if (!String(name || '').trim() || !Number(originalAmount) || Number(initialPaid) < 0) return res.status(400).json({ error: 'Datos de deuda inválidos.' });
       const id = `debt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       await ensure(sheets);
-      await sheets.spreadsheets.values.append({ spreadsheetId, range: `'${sheetName}'!A:E`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[id, String(name).trim(), Number(originalAmount), Number(initialPaid), true]] } });
+      await sheets.spreadsheets.values.append({ spreadsheetId, range: `'${sheetName}'!A:J`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[id, String(name).trim(), Number(originalAmount), Number(initialPaid), true, kind, dueDate, Number(cutoffDay) || '', Number(paymentDay) || '', new Date().toISOString()]] } });
       return res.status(201).json({ id });
     }
     if (req.method === 'PATCH') {
