@@ -56,6 +56,7 @@ const { useState, useEffect, useMemo } = React;
 const MOVEMENTS_API_URL = '/api/movements';
 const BUDGETS_API_URL = '/api/budgets';
 const OPENING_BALANCES_API_URL = '/api/opening-balances';
+const DEBTS_API_URL = '/api/debts';
 
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
@@ -148,6 +149,7 @@ function parseAndMapRows(rows, existingKeys) {
       amount: isNaN(amountNum) ? 0 : amountNum,
       category: categoryIdFromLabel(categoryLabel, txType === 'ingreso'),
       categoryLabel: categoryLabel,
+      debtId: r[7] || '',
       wallet: normalizeWallet(r[4]),
       note: (r[1] || '').trim(),
       date: dateStr,
@@ -240,6 +242,11 @@ function FinanzasAppInner() {
   const [openingBalances, setOpeningBalances] = useState([]);
   const [openingWallet, setOpeningWallet] = useState(WALLETS[0]);
   const [openingAmount, setOpeningAmount] = useState('');
+  const [debts, setDebts] = useState([]);
+  const [selectedDebtId, setSelectedDebtId] = useState('');
+  const [debtName, setDebtName] = useState('');
+  const [debtAmount, setDebtAmount] = useState('');
+  const [debtPaid, setDebtPaid] = useState('');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
@@ -247,6 +254,7 @@ function FinanzasAppInner() {
     pullNow();
     pullBudgets();
     pullOpeningBalances();
+    pullDebts();
     // eslint-disable-next-line
   }, []); // solo al abrir la app
 
@@ -275,6 +283,20 @@ function FinanzasAppInner() {
     } catch (e) { console.warn(e); }
   }
 
+  async function pullDebts() {
+    try {
+      const response = await fetch(DEBTS_API_URL);
+      const data = await response.json();
+      if (response.ok) setDebts(data);
+    } catch (e) { console.warn(e); }
+  }
+
+  async function saveDebt(e) {
+    e.preventDefault();
+    const response = await fetch(DEBTS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: debtName, originalAmount: Number(debtAmount), initialPaid: Number(debtPaid) || 0 }) });
+    if (response.ok) { setDebtName(''); setDebtAmount(''); setDebtPaid(''); pullDebts(); }
+  }
+
   async function saveOpeningBalance(e) {
     e.preventDefault();
     if (openingAmount === '') return;
@@ -296,7 +318,7 @@ function FinanzasAppInner() {
       const objRows = await response.json();
       if (!response.ok) throw new Error(objRows.error || 'No se pudo leer Google Sheets.');
       if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
-        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id]);
+        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id, o.debtId]);
         setTransactions((prev) => {
           // Sheets es la fuente de verdad. Reemplazar la caché evita que los
           // registros de versiones antiguas se dupliquen o alteren el balance.
@@ -378,9 +400,14 @@ function FinanzasAppInner() {
       setError('Ingresa un monto válido.');
       return;
     }
+    if (category === 'deudas' && !selectedDebtId) {
+      setError('Selecciona la deuda a la que corresponde este pago.');
+      return;
+    }
     const tx = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
       type, amount: num, category, categoryLabel: categoryMeta(category).label,
+      debtId: category === 'deudas' ? selectedDebtId : '',
       wallet, note: note.trim(), date: todayStr(),
     };
     if (editingTx) updateInSheets(editingTx, tx);
@@ -390,6 +417,7 @@ function FinanzasAppInner() {
     }
     setAmount('');
     setNote('');
+    setSelectedDebtId('');
   }
 
   function handleEdit(tx) {
@@ -399,6 +427,7 @@ function FinanzasAppInner() {
     setCategory(tx.category);
     setWallet(tx.wallet);
     setNote(tx.note || '');
+    setSelectedDebtId(tx.debtId || '');
     setActiveTab('registrar');
   }
 
@@ -576,7 +605,7 @@ function FinanzasAppInner() {
           </div>
 
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
-            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas']].map(([id, label]) => (
+            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas'], ['deudas', 'Deudas']].map(([id, label]) => (
               <button key={id} type="button" onClick={() => setActiveTab(id)} className="dz-btn"
                 style={{ flex: '1 1 30%', padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
                   backgroundColor: activeTab === id ? 'rgba(232,163,61,0.12)' : '#0f0f12', color: activeTab === id ? '#e8a33d' : '#8a8a92', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
@@ -726,6 +755,14 @@ function FinanzasAppInner() {
             })}
           </div>
 
+          {category === 'deudas' && (
+            <select value={selectedDebtId} onChange={(e) => setSelectedDebtId(e.target.value)}
+              style={{ width: '100%', marginBottom: '12px', padding: '10px 12px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }}>
+              <option value="">Selecciona la deuda a pagar</option>
+              {debts.filter(d => d.active).map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          )}
+
           {error && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '10px' }}>{error}</div>}
 
           <button type="submit" className="dz-btn"
@@ -848,6 +885,31 @@ function FinanzasAppInner() {
             {WALLETS.map((w) => {
               const opening = openingBalances.find(b => b.wallet === w)?.amount || 0;
               return <div key={w} style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 0', borderBottom: '1px solid #2a2a30' }}><span>{w}</span><span className="dz-mono" style={{ color: '#8a8a92' }}>Inicial {formatCOP(opening)} · Actual <b style={{ color: '#eae6df' }}>{formatCOP(walletBalances[w])}</b></span></div>;
+            })}
+          </div>
+        )}
+
+        {activeTab === 'deudas' && (
+          <div style={{ padding: '18px 20px' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>DEUDAS Y CRÉDITOS</div>
+            <form onSubmit={saveDebt} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+              <input value={debtName} onChange={(e) => setDebtName(e.target.value)} placeholder="Nombre: Beatriz, tarjeta, crédito…" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="number" inputMode="numeric" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} placeholder="$ deuda original" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+                <input type="number" inputMode="numeric" value={debtPaid} onChange={(e) => setDebtPaid(e.target.value)} placeholder="$ ya pagado" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              </div>
+              <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+ Añadir deuda</button>
+            </form>
+            {debts.filter(d => d.active).length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade tu primera deuda o crédito para controlar sus pagos.</div> : debts.filter(d => d.active).map((debt) => {
+              const payments = transactions.filter(t => t.type === 'egreso' && t.category === 'deudas' && t.debtId === debt.id).reduce((sum, t) => sum + t.amount, 0);
+              const paid = debt.initialPaid + payments;
+              const remaining = Math.max(0, debt.originalAmount - paid);
+              const progress = Math.min(100, Math.round((paid / debt.originalAmount) * 100));
+              return <div key={debt.id} style={{ padding: '12px', marginBottom: '8px', border: '1px solid #2a2a30', borderRadius: '8px', backgroundColor: '#0f0f12' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{debt.name}</strong><span className="dz-mono" style={{ color: remaining === 0 ? '#3ea8a0' : '#e8a33d' }}>{formatCOP(remaining)}</span></div>
+                <div style={{ height: '5px', margin: '9px 0 6px', backgroundColor: '#232328', borderRadius: '3px' }}><div style={{ width: `${progress}%`, height: '100%', backgroundColor: '#3ea8a0', borderRadius: '3px' }} /></div>
+                <div className="dz-mono" style={{ fontSize: '11px', color: '#8a8a92' }}>Pagado {formatCOP(paid)} de {formatCOP(debt.originalAmount)} · {progress}%</div>
+              </div>;
             })}
           </div>
         )}
