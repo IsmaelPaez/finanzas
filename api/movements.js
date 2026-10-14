@@ -41,11 +41,13 @@ function transaction(row, rowNumber) {
     wallet: String(row[4] || 'Nequi'),
     categoryLabel: String(row[5] || 'Otros'),
     debtId: String(row[6] || ''),
+    cardId: String(row[7] || ''),
+    installments: Number(row[8]) || 1,
   };
 }
 
 async function list(sheets) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A:G` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A:I` });
   const start = hasHeaders ? 2 : 1;
   return (response.data.values || [])
     .slice(hasHeaders ? 1 : 0)
@@ -65,8 +67,8 @@ module.exports = async (req, res) => {
         return res.status(400).json({ error: 'Movimiento incompleto.' });
       }
       await sheets.spreadsheets.values.append({
-        spreadsheetId, range: `'${sheetName}'!A:G`, valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel, tx.debtId || '']] },
+        spreadsheetId, range: `'${sheetName}'!A:I`, valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel, tx.debtId || '', tx.cardId || '', Number(tx.installments) || 1]] },
       });
       return res.status(201).json({ ok: true });
     }
@@ -79,8 +81,8 @@ module.exports = async (req, res) => {
       const row = String(original.id || '').replace('row-', '');
       if (!/^\d+$/.test(row)) return res.status(400).json({ error: 'Movimiento sin identificador de Sheet.' });
       await sheets.spreadsheets.values.update({
-        spreadsheetId, range: `'${sheetName}'!A${row}:G${row}`, valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[updated.date, updated.note || '', Number(updated.amount), normalizedType(updated.type) === 'ingreso' ? 'Ingreso' : 'Egreso', updated.wallet, updated.categoryLabel, updated.debtId || '']] },
+        spreadsheetId, range: `'${sheetName}'!A${row}:I${row}`, valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[updated.date, updated.note || '', Number(updated.amount), normalizedType(updated.type) === 'ingreso' ? 'Ingreso' : 'Egreso', updated.wallet, updated.categoryLabel, updated.debtId || '', updated.cardId || '', Number(updated.installments) || 1]] },
       });
       return res.status(200).json({ ok: true });
     }
@@ -91,7 +93,7 @@ module.exports = async (req, res) => {
       const match = rows.find(tx => tx.id === target.id);
       if (!match) return res.status(404).json({ error: 'Movimiento no encontrado.' });
       const row = match.id.replace('row-', '');
-      await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${sheetName}'!A${row}:G${row}` });
+      await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${sheetName}'!A${row}:I${row}` });
       return res.status(200).json({ ok: true });
     }
 
