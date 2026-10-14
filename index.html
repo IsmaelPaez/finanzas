@@ -281,12 +281,6 @@ function FinanzasAppInner() {
   const [cardCutoffDay, setCardCutoffDay] = useState('');
   const [cardPaymentDay, setCardPaymentDay] = useState('');
   const [cardsError, setCardsError] = useState('');
-  const [cards, setCards] = useState([]);
-  const [cardName, setCardName] = useState('');
-  const [cardLimit, setCardLimit] = useState('');
-  const [cardCutoffDay, setCardCutoffDay] = useState('');
-  const [cardPaymentDay, setCardPaymentDay] = useState('');
-  const [cardsError, setCardsError] = useState('');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
