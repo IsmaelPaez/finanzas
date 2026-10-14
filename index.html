@@ -57,6 +57,7 @@ const MOVEMENTS_API_URL = '/api/movements';
 const BUDGETS_API_URL = '/api/budgets';
 const OPENING_BALANCES_API_URL = '/api/opening-balances';
 const DEBTS_API_URL = '/api/debts';
+const CARDS_API_URL = '/api/cards';
 
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
@@ -270,11 +271,22 @@ function FinanzasAppInner() {
   const [debtName, setDebtName] = useState('');
   const [debtAmount, setDebtAmount] = useState('');
   const [debtPaid, setDebtPaid] = useState('');
-  const [debtKind, setDebtKind] = useState('debt');
+  const [debtInterestRate, setDebtInterestRate] = useState('');
+  const [debtInstallments, setDebtInstallments] = useState('');
   const [debtDueDate, setDebtDueDate] = useState('');
-  const [debtCutoffDay, setDebtCutoffDay] = useState('');
-  const [debtPaymentDay, setDebtPaymentDay] = useState('');
   const [debtsError, setDebtsError] = useState('');
+  const [cards, setCards] = useState([]);
+  const [cardName, setCardName] = useState('');
+  const [cardLimit, setCardLimit] = useState('');
+  const [cardCutoffDay, setCardCutoffDay] = useState('');
+  const [cardPaymentDay, setCardPaymentDay] = useState('');
+  const [cardsError, setCardsError] = useState('');
+  const [cards, setCards] = useState([]);
+  const [cardName, setCardName] = useState('');
+  const [cardLimit, setCardLimit] = useState('');
+  const [cardCutoffDay, setCardCutoffDay] = useState('');
+  const [cardPaymentDay, setCardPaymentDay] = useState('');
+  const [cardsError, setCardsError] = useState('');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
@@ -283,6 +295,7 @@ function FinanzasAppInner() {
     pullBudgets();
     pullOpeningBalances();
     pullDebts();
+    pullCards();
     // eslint-disable-next-line
   }, []); // solo al abrir la app
 
@@ -324,11 +337,31 @@ function FinanzasAppInner() {
     e.preventDefault();
     setDebtsError('');
     try {
-      const response = await fetch(DEBTS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: debtName, originalAmount: Number(debtAmount), initialPaid: Number(debtPaid) || 0, kind: debtKind, dueDate: debtDueDate, cutoffDay: Number(debtCutoffDay) || 0, paymentDay: Number(debtPaymentDay) || 0 }) });
+      const response = await fetch(DEBTS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: debtName, originalAmount: Number(debtAmount), initialPaid: Number(debtPaid) || 0, dueDate: debtDueDate, interestRate: Number(debtInterestRate) || 0, installments: Number(debtInstallments) || 0 }) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'No se pudo crear la deuda.');
-      setDebtName(''); setDebtAmount(''); setDebtPaid(''); setDebtDueDate(''); setDebtCutoffDay(''); setDebtPaymentDay(''); pullDebts();
+      setDebtName(''); setDebtAmount(''); setDebtPaid(''); setDebtDueDate(''); setDebtInterestRate(''); setDebtInstallments(''); pullDebts();
     } catch (error) { setDebtsError(error.message || 'No se pudo crear la deuda.'); }
+  }
+
+  async function pullCards() {
+    try {
+      const response = await fetch(CARDS_API_URL);
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'No se pudieron leer las tarjetas.');
+      setCards(data);
+    } catch (error) { setCardsError(error.message || 'No se pudieron leer las tarjetas.'); }
+  }
+
+  async function saveCard(e) {
+    e.preventDefault();
+    setCardsError('');
+    try {
+      const response = await fetch(CARDS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cardName, creditLimit: Number(cardLimit), cutoffDay: Number(cardCutoffDay), paymentDay: Number(cardPaymentDay) }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'No se pudo crear la tarjeta.');
+      setCardName(''); setCardLimit(''); setCardCutoffDay(''); setCardPaymentDay(''); pullCards();
+    } catch (error) { setCardsError(error.message || 'No se pudo crear la tarjeta.'); }
   }
 
   async function saveOpeningBalance(e) {
@@ -601,7 +634,7 @@ function FinanzasAppInner() {
     return map;
   }, [transactions, openingBalances]);
 
-  const debtSummaries = useMemo(() => debts.filter((debt) => debt.active).map((debt) => {
+  const debtSummaries = useMemo(() => debts.filter((debt) => debt.active && debt.kind !== 'card').map((debt) => {
     const payments = transactions.filter((t) => t.type === 'egreso' && t.category === 'deudas' && t.debtId === debt.id).reduce((sum, t) => sum + t.amount, 0);
     const paid = debt.initialPaid + payments;
     const remaining = Math.max(0, debt.originalAmount - paid);
@@ -667,7 +700,7 @@ function FinanzasAppInner() {
             </button>
             {showMoreTabs && (
               <div style={{ position: 'absolute', zIndex: 3, top: '42px', right: 0, width: '190px', padding: '6px', border: '1px solid #35353d', borderRadius: '8px', backgroundColor: '#17171b', boxShadow: '0 10px 25px rgba(0,0,0,.35)' }}>
-                {[['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas'], ['deudas', 'Deudas']].map(([id, label]) => (
+                {[['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas'], ['deudas', 'Deudas'], ['tarjetas', 'Tarjetas']].map(([id, label]) => (
                   <button key={id} type="button" onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className="dz-btn"
                     style={{ width: '100%', textAlign: 'left', padding: '10px', border: 'none', borderRadius: '5px', background: activeTab === id ? 'rgba(232,163,61,0.12)' : 'transparent', color: activeTab === id ? '#e8a33d' : '#c9c5bd', cursor: 'pointer' }}>{label}</button>
                 ))}
@@ -954,34 +987,51 @@ function FinanzasAppInner() {
           <div style={{ padding: '18px 20px' }}>
             <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>DEUDAS Y CRÉDITOS</div>
             <form onSubmit={saveDebt} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
-              <select value={debtKind} onChange={(e) => setDebtKind(e.target.value)} style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }}>
-                <option value="debt">Deuda personal / crédito</option>
-                <option value="card">Tarjeta de crédito</option>
-              </select>
-              <input value={debtName} onChange={(e) => setDebtName(e.target.value)} placeholder="Nombre: préstamo, tarjeta, crédito…" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <input value={debtName} onChange={(e) => setDebtName(e.target.value)} placeholder="Nombre: préstamo, compra financiada…" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input type="number" inputMode="numeric" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} placeholder="$ deuda original" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
                 <input type="number" inputMode="numeric" value={debtPaid} onChange={(e) => setDebtPaid(e.target.value)} placeholder="$ ya pagado" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
               </div>
-              {debtKind === 'card' ? (
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <input type="number" min="1" max="31" value={debtCutoffDay} onChange={(e) => setDebtCutoffDay(e.target.value)} placeholder="Día de corte" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
-                  <input type="number" min="1" max="31" value={debtPaymentDay} onChange={(e) => setDebtPaymentDay(e.target.value)} placeholder="Día de pago" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
-                </div>
-              ) : <input type="date" value={debtDueDate} onChange={(e) => setDebtDueDate(e.target.value)} style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />}
+              <input type="date" value={debtDueDate} onChange={(e) => setDebtDueDate(e.target.value)} style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="number" min="0" step="0.01" value={debtInterestRate} onChange={(e) => setDebtInterestRate(e.target.value)} placeholder="Interés anual (%)" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+                <input type="number" min="1" value={debtInstallments} onChange={(e) => setDebtInstallments(e.target.value)} placeholder="N.º cuotas" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              </div>
               <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+ Añadir deuda</button>
             </form>
             {debtsError && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '12px' }}>{debtsError}</div>}
             {debtSummaries.length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade tu primera deuda o crédito para controlar sus pagos.</div> : debtSummaries.map((debt) => {
-              const cardState = debt.kind === 'card' ? cardPurchaseState(debt.cutoffDay) : null;
               const lateDays = debt.dueDate ? -daysUntil(debt.dueDate) : 0;
               return <div key={debt.id} style={{ padding: '12px', marginBottom: '8px', border: '1px solid #2a2a30', borderRadius: '8px', backgroundColor: '#0f0f12' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{debt.kind === 'card' ? '💳 ' : ''}{debt.name}</strong><span className="dz-mono" style={{ color: debt.remaining === 0 ? '#3ea8a0' : '#e8a33d' }}>{formatCOP(debt.remaining)}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{debt.name}</strong><span className="dz-mono" style={{ color: debt.remaining === 0 ? '#3ea8a0' : '#e8a33d' }}>{formatCOP(debt.remaining)}</span></div>
                 <div style={{ height: '5px', margin: '9px 0 6px', backgroundColor: '#232328', borderRadius: '3px' }}><div style={{ width: `${debt.progress}%`, height: '100%', backgroundColor: '#3ea8a0', borderRadius: '3px' }} /></div>
                 <div className="dz-mono" style={{ fontSize: '11px', color: '#8a8a92' }}>Pagado {formatCOP(debt.paid)} de {formatCOP(debt.originalAmount)} · {debt.progress}%</div>
-                <div style={{ fontSize: '11px', color: '#8a8a92', marginTop: '5px' }}>{debt.kind === 'card' ? `Corte: día ${debt.cutoffDay || '—'} · Pago: día ${debt.paymentDay || '—'}` : (debt.dueDate ? `Fecha límite: ${debt.dueDate}` : 'Sin fecha límite')}</div>
-                {debt.kind === 'card' && <div style={{ fontSize: '11px', marginTop: '7px', color: cardState.good ? '#3ea8a0' : '#e8a33d', fontWeight: 700 }}>{cardState.good ? '● ' : '● '}{cardState.message}</div>}
-                {debt.kind !== 'card' && debt.remaining > 0 && lateDays > 0 && <div style={{ fontSize: '11px', marginTop: '7px', color: '#e2574c', fontWeight: 700 }}>⚠ Vencida hace {lateDays} día{lateDays === 1 ? '' : 's'}</div>}
+                <div style={{ fontSize: '11px', color: '#8a8a92', marginTop: '5px' }}>{debt.dueDate ? `Fecha límite: ${debt.dueDate}` : 'Sin fecha límite'}{debt.interestRate ? ` · Interés anual: ${debt.interestRate}%` : ''}{debt.installments ? ` · ${debt.installments} cuotas` : ''}</div>
+                {debt.remaining > 0 && lateDays > 0 && <div style={{ fontSize: '11px', marginTop: '7px', color: '#e2574c', fontWeight: 700 }}>⚠ Vencida hace {lateDays} día{lateDays === 1 ? '' : 's'}</div>}
+              </div>;
+            })}
+          </div>
+        )}
+
+        {activeTab === 'tarjetas' && (
+          <div style={{ padding: '18px 20px' }}>
+            <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '10px' }}>TARJETAS DE CRÉDITO</div>
+            <form onSubmit={saveCard} style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '16px' }}>
+              <input value={cardName} onChange={(e) => setCardName(e.target.value)} placeholder="Nombre de la tarjeta" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <input type="number" inputMode="numeric" value={cardLimit} onChange={(e) => setCardLimit(e.target.value)} placeholder="$ cupo total" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input type="number" min="1" max="31" value={cardCutoffDay} onChange={(e) => setCardCutoffDay(e.target.value)} placeholder="Día de corte" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+                <input type="number" min="1" max="31" value={cardPaymentDay} onChange={(e) => setCardPaymentDay(e.target.value)} placeholder="Día límite de pago" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              </div>
+              <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+ Añadir tarjeta</button>
+            </form>
+            {cardsError && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '12px' }}>{cardsError}</div>}
+            {cards.length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade una tarjeta para consultar su ciclo de compra.</div> : cards.filter(card => card.active).map((card) => {
+              const state = cardPurchaseState(card.cutoffDay);
+              return <div key={card.id} style={{ padding: '12px', marginBottom: '8px', border: '1px solid ' + (state.good ? '#3ea8a0' : '#e8a33d'), borderRadius: '8px', backgroundColor: '#0f0f12' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>💳 {card.name}</strong><span className="dz-mono" style={{ color: '#e8a33d' }}>Cupo {formatCOP(card.creditLimit)}</span></div>
+                <div style={{ fontSize: '11px', color: '#8a8a92', marginTop: '6px' }}>Corte: día {card.cutoffDay} · Pago: día {card.paymentDay}</div>
+                <div style={{ fontSize: '12px', color: state.good ? '#3ea8a0' : '#e8a33d', fontWeight: 700, marginTop: '8px' }}>● {state.message}</div>
               </div>;
             })}
           </div>
