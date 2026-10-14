@@ -491,7 +491,8 @@ function FinanzasAppInner() {
   }
 
   const [viewMode, setViewMode] = useState('month'); // 'month' | 'year'
-  const [activeTab, setActiveTab] = useState('resumen');
+  const [activeTab, setActiveTab] = useState('registrar');
+  const [showMoreTabs, setShowMoreTabs] = useState(false);
   const [periodDate, setPeriodDate] = useState(() => new Date());
 
   function shiftPeriod(dir) {
@@ -615,14 +616,26 @@ function FinanzasAppInner() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginBottom: '14px' }}>
-            {[['resumen', 'Resumen'], ['registrar', 'Registrar'], ['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas'], ['deudas', 'Deudas']].map(([id, label]) => (
-              <button key={id} type="button" onClick={() => setActiveTab(id)} className="dz-btn"
-                style={{ flex: '1 1 30%', padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
+          <div style={{ display: 'flex', gap: '6px', marginBottom: '14px', position: 'relative' }}>
+            {[['resumen', 'Resumen'], ['registrar', 'Registrar']].map(([id, label]) => (
+              <button key={id} type="button" onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className="dz-btn"
+                style={{ flex: 1, padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (activeTab === id ? '#e8a33d' : '#2a2a30'),
                   backgroundColor: activeTab === id ? 'rgba(232,163,61,0.12)' : '#0f0f12', color: activeTab === id ? '#e8a33d' : '#8a8a92', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
                 {label}
               </button>
             ))}
+            <button type="button" onClick={() => setShowMoreTabs((current) => !current)} className="dz-btn"
+              style={{ width: '78px', padding: '8px 6px', borderRadius: '6px', border: '1px solid ' + (showMoreTabs ? '#e8a33d' : '#2a2a30'), backgroundColor: '#0f0f12', color: '#8a8a92', fontSize: '11px', fontWeight: 600, cursor: 'pointer' }}>
+              Más {showMoreTabs ? '⌃' : '⌄'}
+            </button>
+            {showMoreTabs && (
+              <div style={{ position: 'absolute', zIndex: 3, top: '42px', right: 0, width: '190px', padding: '6px', border: '1px solid #35353d', borderRadius: '8px', backgroundColor: '#17171b', boxShadow: '0 10px 25px rgba(0,0,0,.35)' }}>
+                {[['movimientos', 'Movimientos'], ['tendencias', 'Tendencias'], ['presupuestos', 'Presupuestos'], ['cuentas', 'Cuentas'], ['deudas', 'Deudas']].map(([id, label]) => (
+                  <button key={id} type="button" onClick={() => { setActiveTab(id); setShowMoreTabs(false); }} className="dz-btn"
+                    style={{ width: '100%', textAlign: 'left', padding: '10px', border: 'none', borderRadius: '5px', background: activeTab === id ? 'rgba(232,163,61,0.12)' : 'transparent', color: activeTab === id ? '#e8a33d' : '#c9c5bd', cursor: 'pointer' }}>{label}</button>
+                ))}
+              </div>
+            )}
           </div>
 
           {false && (
@@ -887,7 +900,7 @@ function FinanzasAppInner() {
         {activeTab === 'cuentas' && (
           <div style={{ padding: '18px 20px' }}>
             <div className="dz-mono" style={{ fontSize: '10px', color: '#6d6d75', letterSpacing: '0.1em', marginBottom: '8px' }}>SALDOS INICIALES</div>
-            <div style={{ color: '#8a8a92', fontSize: '12px', marginBottom: '12px' }}>Se suman una sola vez al historial para calcular el saldo actual de cada cuenta.</div>
+            <div style={{ color: '#8a8a92', fontSize: '12px', marginBottom: '12px' }}>Se suman una sola vez al historial para calcular el saldo actual. Déjalo en $0 si ya registraste un movimiento de “Balance” al iniciar.</div>
             <form onSubmit={saveOpeningBalance} style={{ display: 'flex', gap: '8px', marginBottom: '16px' }}>
               <select value={openingWallet} onChange={(e) => setOpeningWallet(e.target.value)} style={{ flex: 1, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }}>{WALLETS.map(w => <option key={w}>{w}</option>)}</select>
               <input type="number" inputMode="numeric" value={openingAmount} onChange={(e) => setOpeningAmount(e.target.value)} placeholder="$ saldo" style={{ width: '110px', padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
