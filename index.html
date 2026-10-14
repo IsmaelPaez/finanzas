@@ -170,6 +170,29 @@ function todayStr() {
   return d.toISOString().slice(0, 10);
 }
 
+function daysUntil(dateStr) {
+  const today = new Date();
+  const startToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const target = new Date(dateStr + 'T00:00:00');
+  return Math.round((target - startToday) / 86400000);
+}
+
+function cardPurchaseState(cutoffDay) {
+  const today = new Date();
+  const day = Math.max(1, Math.min(31, Number(cutoffDay) || 1));
+  const cutoffFor = (year, month) => new Date(year, month, Math.min(day, new Date(year, month + 1, 0).getDate()));
+  let nextCutoff = cutoffFor(today.getFullYear(), today.getMonth());
+  if (today >= nextCutoff) nextCutoff = cutoffFor(today.getFullYear(), today.getMonth() + 1);
+  const cautionFrom = new Date(nextCutoff);
+  cautionFrom.setDate(cautionFrom.getDate() - 10);
+  const days = Math.ceil((nextCutoff - today) / 86400000);
+  return {
+    good: today < cautionFrom,
+    days,
+    message: today < cautionFrom ? `Buen momento para comprar · corte en ${days} días` : `Evita compras · corte en ${days} días`,
+  };
+}
+
 function monthLabel(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('es-CO', { month: 'long', year: 'numeric' });
@@ -578,6 +601,15 @@ function FinanzasAppInner() {
     return map;
   }, [transactions, openingBalances]);
 
+  const debtSummaries = useMemo(() => debts.filter((debt) => debt.active).map((debt) => {
+    const payments = transactions.filter((t) => t.type === 'egreso' && t.category === 'deudas' && t.debtId === debt.id).reduce((sum, t) => sum + t.amount, 0);
+    const paid = debt.initialPaid + payments;
+    const remaining = Math.max(0, debt.originalAmount - paid);
+    return { ...debt, payments, paid, remaining, progress: Math.min(100, Math.round((paid / debt.originalAmount) * 100)) };
+  }), [debts, transactions]);
+
+  const overdueDebts = debtSummaries.filter((debt) => debt.kind !== 'card' && debt.remaining > 0 && debt.dueDate && daysUntil(debt.dueDate) < 0);
+
   const maxCatValue = expenseByCategory.length ? expenseByCategory[0][1] : 0;
   const categories = type === 'ingreso' ? INCOME_CATEGORIES : EXPENSE_CATEGORIES;
   const meterPct = totals.ingresos > 0 ? Math.min(100, Math.round((totals.gastos / totals.ingresos) * 100)) : (totals.gastos > 0 ? 100 : 0);
@@ -590,6 +622,11 @@ function FinanzasAppInner() {
           <div className="flex items-center justify-between mb-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
             <div className="dz-mono" style={{ fontSize: '11px', letterSpacing: '0.14em', color: '#8a8a92', textTransform: 'uppercase' }}>Sesión activa</div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              {overdueDebts.length > 0 && (
+                <button type="button" onClick={() => setActiveTab('deudas')} className="dz-btn" style={{ border: 'none', background: 'none', color: '#e2574c', fontSize: '10px', fontWeight: 700, cursor: 'pointer', padding: 0 }}>
+                  ⚠ {overdueDebts.length} VENCIDA{overdueDebts.length > 1 ? 'S' : ''}
+                </button>
+              )}
               <span className="dz-mono" style={{ fontSize: '10px', letterSpacing: '0.06em', color: syncStatus === 'failed' ? '#e2574c' : syncStatus === 'sending' ? '#e8a33d' : '#3ea8a0' }}>
                 {syncStatus === 'sending' ? 'SINCRONIZANDO…' : syncStatus === 'failed' ? 'ERROR DE CONEXIÓN' : 'SHEETS ✓'}
               </span>
@@ -921,7 +958,7 @@ function FinanzasAppInner() {
                 <option value="debt">Deuda personal / crédito</option>
                 <option value="card">Tarjeta de crédito</option>
               </select>
-              <input value={debtName} onChange={(e) => setDebtName(e.target.value)} placeholder="Nombre: Beatriz, tarjeta, crédito…" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
+              <input value={debtName} onChange={(e) => setDebtName(e.target.value)} placeholder="Nombre: préstamo, tarjeta, crédito…" style={{ padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input type="number" inputMode="numeric" value={debtAmount} onChange={(e) => setDebtAmount(e.target.value)} placeholder="$ deuda original" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
                 <input type="number" inputMode="numeric" value={debtPaid} onChange={(e) => setDebtPaid(e.target.value)} placeholder="$ ya pagado" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
@@ -935,16 +972,16 @@ function FinanzasAppInner() {
               <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+ Añadir deuda</button>
             </form>
             {debtsError && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '12px' }}>{debtsError}</div>}
-            {debts.filter(d => d.active).length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade tu primera deuda o crédito para controlar sus pagos.</div> : debts.filter(d => d.active).map((debt) => {
-              const payments = transactions.filter(t => t.type === 'egreso' && t.category === 'deudas' && t.debtId === debt.id).reduce((sum, t) => sum + t.amount, 0);
-              const paid = debt.initialPaid + payments;
-              const remaining = Math.max(0, debt.originalAmount - paid);
-              const progress = Math.min(100, Math.round((paid / debt.originalAmount) * 100));
+            {debtSummaries.length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade tu primera deuda o crédito para controlar sus pagos.</div> : debtSummaries.map((debt) => {
+              const cardState = debt.kind === 'card' ? cardPurchaseState(debt.cutoffDay) : null;
+              const lateDays = debt.dueDate ? -daysUntil(debt.dueDate) : 0;
               return <div key={debt.id} style={{ padding: '12px', marginBottom: '8px', border: '1px solid #2a2a30', borderRadius: '8px', backgroundColor: '#0f0f12' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{debt.kind === 'card' ? '💳 ' : ''}{debt.name}</strong><span className="dz-mono" style={{ color: remaining === 0 ? '#3ea8a0' : '#e8a33d' }}>{formatCOP(remaining)}</span></div>
-                <div style={{ height: '5px', margin: '9px 0 6px', backgroundColor: '#232328', borderRadius: '3px' }}><div style={{ width: `${progress}%`, height: '100%', backgroundColor: '#3ea8a0', borderRadius: '3px' }} /></div>
-                <div className="dz-mono" style={{ fontSize: '11px', color: '#8a8a92' }}>Pagado {formatCOP(paid)} de {formatCOP(debt.originalAmount)} · {progress}%</div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>{debt.kind === 'card' ? '💳 ' : ''}{debt.name}</strong><span className="dz-mono" style={{ color: debt.remaining === 0 ? '#3ea8a0' : '#e8a33d' }}>{formatCOP(debt.remaining)}</span></div>
+                <div style={{ height: '5px', margin: '9px 0 6px', backgroundColor: '#232328', borderRadius: '3px' }}><div style={{ width: `${debt.progress}%`, height: '100%', backgroundColor: '#3ea8a0', borderRadius: '3px' }} /></div>
+                <div className="dz-mono" style={{ fontSize: '11px', color: '#8a8a92' }}>Pagado {formatCOP(debt.paid)} de {formatCOP(debt.originalAmount)} · {debt.progress}%</div>
                 <div style={{ fontSize: '11px', color: '#8a8a92', marginTop: '5px' }}>{debt.kind === 'card' ? `Corte: día ${debt.cutoffDay || '—'} · Pago: día ${debt.paymentDay || '—'}` : (debt.dueDate ? `Fecha límite: ${debt.dueDate}` : 'Sin fecha límite')}</div>
+                {debt.kind === 'card' && <div style={{ fontSize: '11px', marginTop: '7px', color: cardState.good ? '#3ea8a0' : '#e8a33d', fontWeight: 700 }}>{cardState.good ? '● ' : '● '}{cardState.message}</div>}
+                {debt.kind !== 'card' && debt.remaining > 0 && lateDays > 0 && <div style={{ fontSize: '11px', marginTop: '7px', color: '#e2574c', fontWeight: 700 }}>⚠ Vencida hace {lateDays} día{lateDays === 1 ? '' : 's'}</div>}
               </div>;
             })}
           </div>

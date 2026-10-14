@@ -31,7 +31,7 @@ module.exports = async (req, res) => {
       if (!String(name || '').trim() || !Number(originalAmount) || Number(initialPaid) < 0) return res.status(400).json({ error: 'Datos de deuda inválidos.' });
       const id = `debt_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
       await ensure(sheets);
-      await sheets.spreadsheets.values.append({ spreadsheetId, range: `'${sheetName}'!A:J`, valueInputOption: 'USER_ENTERED', requestBody: { values: [[id, String(name).trim(), Number(originalAmount), Number(initialPaid), true, kind, dueDate, Number(cutoffDay) || '', Number(paymentDay) || '', new Date().toISOString()]] } });
+      await sheets.spreadsheets.values.append({ spreadsheetId, range: `'${sheetName}'!A:J`, valueInputOption: 'RAW', requestBody: { values: [[id, String(name).trim(), Number(originalAmount), Number(initialPaid), true, kind, dueDate, Number(cutoffDay) || '', Number(paymentDay) || '', new Date().toISOString()]] } });
       return res.status(201).json({ id });
     }
     if (req.method === 'PATCH') {
