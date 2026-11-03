@@ -151,6 +151,8 @@ function parseAndMapRows(rows, existingKeys) {
       category: categoryIdFromLabel(categoryLabel, txType === 'ingreso'),
       categoryLabel: categoryLabel,
       debtId: r[7] || '',
+      cardId: r[8] || '',
+      installments: Number(r[9]) || 1,
       wallet: normalizeWallet(r[4]),
       note: (r[1] || '').trim(),
       date: dateStr,
@@ -281,6 +283,10 @@ function FinanzasAppInner() {
   const [cardCutoffDay, setCardCutoffDay] = useState('');
   const [cardPaymentDay, setCardPaymentDay] = useState('');
   const [cardsError, setCardsError] = useState('');
+  const [editingDebt, setEditingDebt] = useState(null);
+  const [editingCard, setEditingCard] = useState(null);
+  const [cardPurchaseId, setCardPurchaseId] = useState('');
+  const [cardInstallments, setCardInstallments] = useState('1');
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
@@ -331,10 +337,11 @@ function FinanzasAppInner() {
     e.preventDefault();
     setDebtsError('');
     try {
-      const response = await fetch(DEBTS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: debtName, originalAmount: Number(debtAmount), initialPaid: Number(debtPaid) || 0, dueDate: debtDueDate, interestRate: Number(debtInterestRate) || 0, installments: Number(debtInstallments) || 0 }) });
+      const debtPayload = { ...(editingDebt || {}), name: debtName, originalAmount: Number(debtAmount), initialPaid: Number(debtPaid) || 0, dueDate: debtDueDate, interestRate: Number(debtInterestRate) || 0, installments: Number(debtInstallments) || 0 };
+      const response = await fetch(DEBTS_API_URL, { method: editingDebt ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingDebt ? { row: editingDebt.row, debt: debtPayload } : debtPayload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'No se pudo crear la deuda.');
-      setDebtName(''); setDebtAmount(''); setDebtPaid(''); setDebtDueDate(''); setDebtInterestRate(''); setDebtInstallments(''); pullDebts();
+      setDebtName(''); setDebtAmount(''); setDebtPaid(''); setDebtDueDate(''); setDebtInterestRate(''); setDebtInstallments(''); setEditingDebt(null); pullDebts();
     } catch (error) { setDebtsError(error.message || 'No se pudo crear la deuda.'); }
   }
 
@@ -351,12 +358,22 @@ function FinanzasAppInner() {
     e.preventDefault();
     setCardsError('');
     try {
-      const response = await fetch(CARDS_API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: cardName, creditLimit: Number(cardLimit), cutoffDay: Number(cardCutoffDay), paymentDay: Number(cardPaymentDay) }) });
+      const cardPayload = { ...(editingCard || {}), name: cardName, creditLimit: Number(cardLimit), cutoffDay: Number(cardCutoffDay), paymentDay: Number(cardPaymentDay) };
+      const response = await fetch(CARDS_API_URL, { method: editingCard ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(editingCard ? { row: editingCard.row, card: cardPayload } : cardPayload) });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'No se pudo crear la tarjeta.');
-      setCardName(''); setCardLimit(''); setCardCutoffDay(''); setCardPaymentDay(''); pullCards();
+      setCardName(''); setCardLimit(''); setCardCutoffDay(''); setCardPaymentDay(''); setEditingCard(null); pullCards();
     } catch (error) { setCardsError(error.message || 'No se pudo crear la tarjeta.'); }
   }
+
+  function editDebt(debt) {
+    setEditingDebt(debt); setDebtName(debt.name); setDebtAmount(String(debt.originalAmount)); setDebtPaid(String(debt.initialPaid)); setDebtDueDate(debt.dueDate || ''); setDebtInterestRate(String(debt.interestRate || '')); setDebtInstallments(String(debt.installments || ''));
+  }
+  function editCard(card) {
+    setEditingCard(card); setCardName(card.name); setCardLimit(String(card.creditLimit)); setCardCutoffDay(String(card.cutoffDay)); setCardPaymentDay(String(card.paymentDay));
+  }
+  async function archiveDebt(debt) { if (window.confirm(`¿Eliminar ${debt.name}? Se ocultará pero no borrará sus movimientos.`)) { await fetch(DEBTS_API_URL, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: debt.row, active: false }) }); pullDebts(); } }
+  async function archiveCard(card) { if (window.confirm(`¿Eliminar ${card.name}? Se ocultará pero no borrará sus compras.`)) { await fetch(CARDS_API_URL, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ row: card.row, active: false }) }); pullCards(); } }
 
   async function saveOpeningBalance(e) {
     e.preventDefault();
@@ -379,7 +396,7 @@ function FinanzasAppInner() {
       const objRows = await response.json();
       if (!response.ok) throw new Error(objRows.error || 'No se pudo leer Google Sheets.');
       if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
-        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id, o.debtId]);
+        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id, o.debtId, o.cardId, o.installments]);
         setTransactions((prev) => {
           // Sheets es la fuente de verdad. Reemplazar la caché evita que los
           // registros de versiones antiguas se dupliquen o alteren el balance.
@@ -465,11 +482,18 @@ function FinanzasAppInner() {
       setError('Selecciona la deuda a la que corresponde este pago.');
       return;
     }
+    if (cardPurchaseId && type !== 'egreso') {
+      setError('Una compra con tarjeta debe registrarse como egreso.');
+      return;
+    }
+    const chosenCard = cards.find((card) => card.id === cardPurchaseId);
     const tx = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
       type, amount: num, category, categoryLabel: categoryMeta(category).label,
       debtId: category === 'deudas' ? selectedDebtId : '',
-      wallet, note: note.trim(), date: todayStr(),
+      cardId: cardPurchaseId,
+      installments: cardPurchaseId ? Math.max(1, Number(cardInstallments) || 1) : 1,
+      wallet: chosenCard ? `Tarjeta · ${chosenCard.name}` : wallet, note: note.trim(), date: todayStr(),
     };
     if (editingTx) updateInSheets(editingTx, tx);
     else {
@@ -479,6 +503,8 @@ function FinanzasAppInner() {
     setAmount('');
     setNote('');
     setSelectedDebtId('');
+    setCardPurchaseId('');
+    setCardInstallments('1');
   }
 
   function handleEdit(tx) {
@@ -489,6 +515,8 @@ function FinanzasAppInner() {
     setWallet(tx.wallet);
     setNote(tx.note || '');
     setSelectedDebtId(tx.debtId || '');
+    setCardPurchaseId(tx.cardId || '');
+    setCardInstallments(String(tx.installments || 1));
     setActiveTab('registrar');
   }
 
@@ -851,6 +879,17 @@ function FinanzasAppInner() {
             </select>
           )}
 
+          {type === 'egreso' && cards.filter((card) => card.active).length > 0 && (
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '12px' }}>
+              <select value={cardPurchaseId} onChange={(e) => setCardPurchaseId(e.target.value)}
+                style={{ flex: 1, minWidth: 0, padding: '10px 12px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }}>
+                <option value="">Pagar con cuenta</option>
+                {cards.filter((card) => card.active).map((card) => <option key={card.id} value={card.id}>💳 Compra con {card.name}</option>)}
+              </select>
+              {cardPurchaseId && <input type="number" min="1" value={cardInstallments} onChange={(e) => setCardInstallments(e.target.value)} aria-label="Número de cuotas" placeholder="Cuotas" style={{ width: '84px', padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />}
+            </div>
+          )}
+
           {error && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '10px' }}>{error}</div>}
 
           <button type="submit" className="dz-btn"
@@ -991,7 +1030,7 @@ function FinanzasAppInner() {
                 <input type="number" min="0" step="0.01" value={debtInterestRate} onChange={(e) => setDebtInterestRate(e.target.value)} placeholder="Interés anual (%)" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
                 <input type="number" min="1" value={debtInstallments} onChange={(e) => setDebtInstallments(e.target.value)} placeholder="N.º cuotas" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
               </div>
-              <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+ Añadir deuda</button>
+              <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>{editingDebt ? 'Guardar deuda' : '+ Añadir deuda'}</button>
             </form>
             {debtsError && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '12px' }}>{debtsError}</div>}
             {debtSummaries.length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade tu primera deuda o crédito para controlar sus pagos.</div> : debtSummaries.map((debt) => {
@@ -1002,6 +1041,7 @@ function FinanzasAppInner() {
                 <div className="dz-mono" style={{ fontSize: '11px', color: '#8a8a92' }}>Pagado {formatCOP(debt.paid)} de {formatCOP(debt.originalAmount)} · {debt.progress}%</div>
                 <div style={{ fontSize: '11px', color: '#8a8a92', marginTop: '5px' }}>{debt.dueDate ? `Fecha límite: ${debt.dueDate}` : 'Sin fecha límite'}{debt.interestRate ? ` · Interés anual: ${debt.interestRate}%` : ''}{debt.installments ? ` · ${debt.installments} cuotas` : ''}</div>
                 {debt.remaining > 0 && lateDays > 0 && <div style={{ fontSize: '11px', marginTop: '7px', color: '#e2574c', fontWeight: 700 }}>⚠ Vencida hace {lateDays} día{lateDays === 1 ? '' : 's'}</div>}
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}><button onClick={() => editDebt(debt)} style={{ border: 'none', background: 'none', color: '#8a8a92', cursor: 'pointer' }}>Editar</button><button onClick={() => archiveDebt(debt)} style={{ border: 'none', background: 'none', color: '#e2574c', cursor: 'pointer' }}>Eliminar</button></div>
               </div>;
             })}
           </div>
@@ -1017,15 +1057,21 @@ function FinanzasAppInner() {
                 <input type="number" min="1" max="31" value={cardCutoffDay} onChange={(e) => setCardCutoffDay(e.target.value)} placeholder="Día de corte" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
                 <input type="number" min="1" max="31" value={cardPaymentDay} onChange={(e) => setCardPaymentDay(e.target.value)} placeholder="Día límite de pago" style={{ flex: 1, minWidth: 0, padding: '10px', borderRadius: '6px', backgroundColor: '#0f0f12', border: '1px solid #2a2a30', color: '#eae6df' }} />
               </div>
-              <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>+ Añadir tarjeta</button>
+              <button className="dz-btn" style={{ padding: '10px', border: 'none', borderRadius: '6px', backgroundColor: '#e8a33d', color: '#17171b', fontWeight: 700 }}>{editingCard ? 'Guardar tarjeta' : '+ Añadir tarjeta'}</button>
             </form>
             {cardsError && <div style={{ color: '#e2574c', fontSize: '12px', marginBottom: '12px' }}>{cardsError}</div>}
             {cards.length === 0 ? <div style={{ color: '#6d6d75', fontSize: '13px' }}>Añade una tarjeta para consultar su ciclo de compra.</div> : cards.filter(card => card.active).map((card) => {
               const state = cardPurchaseState(card.cutoffDay);
+              const purchases = transactions.filter((tx) => tx.type === 'egreso' && tx.cardId === card.id);
+              const used = purchases.reduce((sum, tx) => sum + tx.amount, 0);
+              const available = Math.max(0, card.creditLimit - used);
+              const installments = purchases.reduce((sum, tx) => sum + (tx.installments || 1), 0);
               return <div key={card.id} style={{ padding: '12px', marginBottom: '8px', border: '1px solid ' + (state.good ? '#3ea8a0' : '#e8a33d'), borderRadius: '8px', backgroundColor: '#0f0f12' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>💳 {card.name}</strong><span className="dz-mono" style={{ color: '#e8a33d' }}>Cupo {formatCOP(card.creditLimit)}</span></div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', gap: '10px' }}><strong>💳 {card.name}</strong><span className="dz-mono" style={{ color: '#e8a33d' }}>Disponible {formatCOP(available)}</span></div>
                 <div style={{ fontSize: '11px', color: '#8a8a92', marginTop: '6px' }}>Corte: día {card.cutoffDay} · Pago: día {card.paymentDay}</div>
+                <div className="dz-mono" style={{ fontSize: '11px', color: '#8a8a92', marginTop: '5px' }}>Usado {formatCOP(used)} de {formatCOP(card.creditLimit)} · {installments} cuota{installments === 1 ? '' : 's'} registradas</div>
                 <div style={{ fontSize: '12px', color: state.good ? '#3ea8a0' : '#e8a33d', fontWeight: 700, marginTop: '8px' }}>● {state.message}</div>
+                <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}><button onClick={() => editCard(card)} style={{ border: 'none', background: 'none', color: '#8a8a92', cursor: 'pointer' }}>Editar</button><button onClick={() => archiveCard(card)} style={{ border: 'none', background: 'none', color: '#e2574c', cursor: 'pointer' }}>Eliminar</button></div>
               </div>;
             })}
           </div>

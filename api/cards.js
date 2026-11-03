@@ -30,6 +30,17 @@ module.exports = async (req, res) => {
       await sheets.spreadsheets.values.append({ spreadsheetId, range: `'${sheetName}'!A:F`, valueInputOption: 'RAW', requestBody: { values: [[id, String(name).trim(), Number(creditLimit), Number(cutoffDay), Number(paymentDay), true]] } });
       return res.status(201).json({ id });
     }
-    res.setHeader('Allow', 'GET, POST'); return res.status(405).json({ error: 'Método no permitido.' });
+    if (req.method === 'PATCH') {
+      const { row, card, active } = req.body || {};
+      if (!Number(row)) return res.status(400).json({ error: 'Tarjeta inválida.' });
+      if (card) {
+        if (!String(card.name || '').trim() || !Number(card.creditLimit) || !Number(card.cutoffDay) || !Number(card.paymentDay)) return res.status(400).json({ error: 'Completa los datos de la tarjeta.' });
+        await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!A${Number(row)}:F${Number(row)}`, valueInputOption: 'RAW', requestBody: { values: [[card.id, String(card.name).trim(), Number(card.creditLimit), Number(card.cutoffDay), Number(card.paymentDay), card.active !== false]] } });
+      } else {
+        await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!F${Number(row)}`, valueInputOption: 'RAW', requestBody: { values: [[Boolean(active)]] } });
+      }
+      return res.status(200).json({ ok: true });
+    }
+    res.setHeader('Allow', 'GET, POST, PATCH'); return res.status(405).json({ error: 'Método no permitido.' });
   } catch (error) { console.error(error); return res.status(500).json({ error: error.message || 'No se pudieron gestionar las tarjetas.' }); }
 };

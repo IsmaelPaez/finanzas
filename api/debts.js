@@ -35,9 +35,14 @@ module.exports = async (req, res) => {
       return res.status(201).json({ id });
     }
     if (req.method === 'PATCH') {
-      const { row, active } = req.body || {};
+      const { row, active, debt } = req.body || {};
       if (!Number(row)) return res.status(400).json({ error: 'Deuda inválida.' });
-      await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!E${Number(row)}`, valueInputOption: 'RAW', requestBody: { values: [[Boolean(active)]] } });
+      if (debt) {
+        if (!String(debt.name || '').trim() || !Number(debt.originalAmount)) return res.status(400).json({ error: 'Datos de deuda inválidos.' });
+        await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!A${Number(row)}:L${Number(row)}`, valueInputOption: 'RAW', requestBody: { values: [[debt.id, String(debt.name).trim(), Number(debt.originalAmount), Number(debt.initialPaid) || 0, debt.active !== false, 'debt', debt.dueDate || '', '', '', '', Number(debt.interestRate) || '', Number(debt.installments) || '']] } });
+      } else {
+        await sheets.spreadsheets.values.update({ spreadsheetId, range: `'${sheetName}'!E${Number(row)}`, valueInputOption: 'RAW', requestBody: { values: [[Boolean(active)]] } });
+      }
       return res.status(200).json({ ok: true });
     }
     res.setHeader('Allow', 'GET, POST, PATCH'); return res.status(405).json({ error: 'Método no permitido.' });
