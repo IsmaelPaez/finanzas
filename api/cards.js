@@ -15,7 +15,7 @@ async function ensure(sheets) {
 async function list(sheets) {
   await ensure(sheets);
   const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A2:F` });
-  return (response.data.values || []).filter(row => row[0] && row[1]).map((row, index) => ({ row: index + 2, id: String(row[0]), name: String(row[1]), creditLimit: Number(row[2]) || 0, cutoffDay: Number(row[3]) || 0, paymentDay: Number(row[4]) || 0, active: String(row[5] || 'true') !== 'false' }));
+  return (response.data.values || []).filter(row => row[0] && row[1]).map((row, index) => ({ row: index + 2, id: String(row[0]), name: String(row[1]), creditLimit: Number(row[2]) || 0, cutoffDay: Number(row[3]) || 0, paymentDay: Number(row[4]) || 0, active: row[5] === undefined || row[5] === '' ? true : String(row[5]).toLowerCase() !== 'false' }));
 }
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');

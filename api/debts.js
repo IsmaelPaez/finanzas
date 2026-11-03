@@ -19,7 +19,7 @@ async function ensure(sheets) {
 async function list(sheets) {
   await ensure(sheets);
   const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A2:L` });
-  return (response.data.values || []).filter(row => row[0] && row[1]).map((row, index) => ({ row: index + 2, id: String(row[0]), name: String(row[1]), originalAmount: Number(row[2]) || 0, initialPaid: Number(row[3]) || 0, active: String(row[4] || 'true') !== 'false', kind: String(row[5] || 'debt'), dueDate: String(row[6] || ''), interestRate: Number(row[10]) || 0, installments: Number(row[11]) || 0 }));
+  return (response.data.values || []).filter(row => row[0] && row[1]).map((row, index) => ({ row: index + 2, id: String(row[0]), name: String(row[1]), originalAmount: Number(row[2]) || 0, initialPaid: Number(row[3]) || 0, active: row[4] === undefined || row[4] === '' ? true : String(row[4]).toLowerCase() !== 'false', kind: String(row[5] || 'debt'), dueDate: String(row[6] || ''), interestRate: Number(row[10]) || 0, installments: Number(row[11]) || 0 }));
 }
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
