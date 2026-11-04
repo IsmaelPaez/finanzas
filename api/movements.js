@@ -66,11 +66,13 @@ module.exports = async (req, res) => {
       if (!tx.date || !tx.amount || !tx.type || !tx.wallet || !tx.categoryLabel) {
         return res.status(400).json({ error: 'Movimiento incompleto.' });
       }
-      await sheets.spreadsheets.values.append({
+      const appended = await sheets.spreadsheets.values.append({
         spreadsheetId, range: `'${sheetName}'!A:I`, valueInputOption: 'USER_ENTERED',
         requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel, tx.debtId || '', tx.cardId || '', Number(tx.installments) || 1]] },
       });
-      return res.status(201).json({ ok: true });
+      const updatedRange = appended.data?.updates?.updatedRange || '';
+      const rowMatch = /!A(\d+)(?::|$)/.exec(updatedRange);
+      return res.status(201).json({ ok: true, id: rowMatch ? `row-${rowMatch[1]}` : undefined });
     }
 
     if (req.method === 'PATCH') {

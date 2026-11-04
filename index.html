@@ -49,7 +49,7 @@
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 // La API corre en Vercel, en el mismo dominio de la página. Las credenciales
 // de Google se guardan como variables privadas de Vercel.
@@ -287,6 +287,10 @@ function FinanzasAppInner() {
   const [editingCard, setEditingCard] = useState(null);
   const [cardPurchaseId, setCardPurchaseId] = useState('');
   const [cardInstallments, setCardInstallments] = useState('1');
+  // Una lectura de Sheets puede llegar antes de que un append recién aceptado
+  // sea visible. Conservamos esos movimientos durante ese intervalo para que
+  // una sincronización no los haga desaparecer de la interfaz.
+  const pendingTransactionsRef = useRef(new Map());
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
@@ -415,11 +419,17 @@ function FinanzasAppInner() {
       if (!response.ok) throw new Error(objRows.error || 'No se pudo leer Google Sheets.');
       if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
         const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id, o.debtId, o.cardId, o.installments]);
-        setTransactions((prev) => {
+        setTransactions(() => {
           // Sheets es la fuente de verdad. Reemplazar la caché evita que los
           // registros de versiones antiguas se dupliquen o alteren el balance.
+          // También conservamos los append confirmados que aún no aparecen en
+          // la lectura de Google por su pequeña demora de propagación.
           const { imported } = parseAndMapRows(rows, new Set());
-          return imported.sort((a, b) => b.date.localeCompare(a.date));
+          const idsFromSheets = new Set(imported.map((tx) => tx.id));
+          const pending = Array.from(pendingTransactionsRef.current.values())
+            .filter((tx) => !idsFromSheets.has(tx.id));
+          for (const tx of imported) pendingTransactionsRef.current.delete(tx.id);
+          return [...imported, ...pending].sort((a, b) => b.date.localeCompare(a.date));
         });
         setImportStatus('done');
         setImportMsg('Sincronizado con Sheets.');
@@ -447,8 +457,15 @@ function FinanzasAppInner() {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'No se pudo guardar el movimiento.');
+      // La API devuelve la fila real de Sheets. Reemplazar el id temporal hace
+      // que futuras ediciones/eliminaciones apunten a la fila correcta.
+      if (result.id) {
+        pendingTransactionsRef.current.delete(tx.id);
+        const persisted = { ...tx, id: result.id };
+        pendingTransactionsRef.current.set(persisted.id, persisted);
+        setTransactions((prev) => prev.map((item) => item.id === tx.id ? persisted : item));
+      }
       setSyncStatus('sent');
-      setTimeout(() => pullNow(), 700);
     } catch (e) {
       setSyncStatus('failed');
       setImportMsg(e.message || 'No se pudo guardar el movimiento.');
@@ -515,6 +532,7 @@ function FinanzasAppInner() {
     };
     if (editingTx) updateInSheets(editingTx, tx);
     else {
+      pendingTransactionsRef.current.set(tx.id, tx);
       setTransactions((prev) => [tx, ...prev]);
       syncToSheets(tx);
     }
