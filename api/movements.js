@@ -80,6 +80,14 @@ module.exports = async (req, res) => {
       });
       const updatedRange = appended.data?.updates?.updatedRange || '';
       const rowMatch = /!A(\d+)(?::|$)/.exec(updatedRange);
+      if (!rowMatch) throw new Error('Sheets no confirmó la fila creada.');
+      // No confirmamos el registro hasta leerlo de vuelta desde la misma hoja.
+      // Si la respuesta de Google fue transitoria, el cliente lo reintentará
+      // usando clientId sin duplicarlo.
+      const row = rowMatch[1];
+      const verification = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A${row}:J${row}` });
+      const saved = verification.data.values?.[0] || [];
+      if (String(saved[9] || '') !== String(tx.clientId || '')) throw new Error('Sheets no confirmó el movimiento guardado.');
       return res.status(201).json({ ok: true, id: rowMatch ? `row-${rowMatch[1]}` : undefined });
     }
 

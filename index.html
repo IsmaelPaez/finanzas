@@ -49,7 +49,7 @@
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 
-const { useState, useEffect, useMemo } = React;
+const { useState, useEffect, useMemo, useRef } = React;
 
 // La API corre en Vercel, en el mismo dominio de la página. Las credenciales
 // de Google se guardan como variables privadas de Vercel.
@@ -327,6 +327,8 @@ function FinanzasAppInner() {
   const [cardPurchaseId, setCardPurchaseId] = useState('');
   const [cardInstallments, setCardInstallments] = useState('1');
   const [pendingSyncCount, setPendingSyncCount] = useState(() => loadJSON(MOVEMENTS_OUTBOX_KEY, []).length);
+  const retryInFlightRef = useRef(false);
+  const retryTimerRef = useRef(null);
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
@@ -360,8 +362,23 @@ function FinanzasAppInner() {
   }
 
   async function retryPendingTransactions() {
-    const queue = queuedTransactions();
-    for (const tx of queue) await syncToSheets(tx, true);
+    if (retryInFlightRef.current) return;
+    retryInFlightRef.current = true;
+    try {
+      const queue = queuedTransactions();
+      for (const tx of queue) await syncToSheets(tx, true);
+    } finally {
+      retryInFlightRef.current = false;
+    }
+  }
+
+  function scheduleRetry() {
+    if (retryTimerRef.current) return;
+    retryTimerRef.current = setTimeout(async () => {
+      retryTimerRef.current = null;
+      await retryPendingTransactions();
+      if (queuedTransactions().length) scheduleRetry();
+    }, 5000);
   }
 
   async function pullBudgets() {
@@ -523,6 +540,7 @@ function FinanzasAppInner() {
     } catch (e) {
       setSyncStatus('failed');
       setImportMsg(`No se guardó en Sheets y se reintentará automáticamente: ${e.message || ''}`);
+      scheduleRetry();
     }
   }
 
