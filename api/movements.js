@@ -56,6 +56,19 @@ async function list(sheets) {
     .filter(tx => tx.date && tx.amount);
 }
 
+async function findByClientId(sheets, clientId) {
+  if (!clientId) return null;
+  // Tras un append, Google puede tardar una fracción de segundo en reflejar
+  // la nueva fila en values.get. Consultamos brevemente antes de declararlo
+  // como pendiente; el clientId evita que un reintento lo duplique.
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const found = (await list(sheets)).find((item) => item.clientId === String(clientId));
+    if (found) return found;
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  return null;
+}
+
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
   try {
@@ -71,24 +84,19 @@ module.exports = async (req, res) => {
       // corta después de guardar, el reintento devuelve la misma fila y no
       // crea un movimiento duplicado.
       if (tx.clientId) {
-        const existing = (await list(sheets)).find((item) => item.clientId === String(tx.clientId));
+        const existing = await findByClientId(sheets, tx.clientId);
         if (existing) return res.status(200).json({ ok: true, id: existing.id });
       }
-      const appended = await sheets.spreadsheets.values.append({
+      await sheets.spreadsheets.values.append({
         spreadsheetId, range: `'${sheetName}'!A:J`, valueInputOption: 'USER_ENTERED',
         requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel, tx.debtId || '', tx.cardId || '', Number(tx.installments) || 1, tx.clientId || '']] },
       });
-      const updatedRange = appended.data?.updates?.updatedRange || '';
-      const rowMatch = /!A(\d+)(?::|$)/.exec(updatedRange);
-      if (!rowMatch) throw new Error('Sheets no confirmó la fila creada.');
       // No confirmamos el registro hasta leerlo de vuelta desde la misma hoja.
       // Si la respuesta de Google fue transitoria, el cliente lo reintentará
       // usando clientId sin duplicarlo.
-      const row = rowMatch[1];
-      const verification = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A${row}:J${row}` });
-      const saved = verification.data.values?.[0] || [];
-      if (String(saved[9] || '') !== String(tx.clientId || '')) throw new Error('Sheets no confirmó el movimiento guardado.');
-      return res.status(201).json({ ok: true, id: rowMatch ? `row-${rowMatch[1]}` : undefined });
+      const saved = await findByClientId(sheets, tx.clientId);
+      if (!saved) throw new Error('Sheets no confirmó el movimiento guardado.');
+      return res.status(201).json({ ok: true, id: saved.id });
     }
 
     if (req.method === 'PATCH') {
