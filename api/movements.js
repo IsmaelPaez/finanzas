@@ -43,11 +43,12 @@ function transaction(row, rowNumber) {
     debtId: String(row[6] || ''),
     cardId: String(row[7] || ''),
     installments: Number(row[8]) || 1,
+    clientId: String(row[9] || ''),
   };
 }
 
 async function list(sheets) {
-  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A:I` });
+  const response = await sheets.spreadsheets.values.get({ spreadsheetId, range: `'${sheetName}'!A:J` });
   const start = hasHeaders ? 2 : 1;
   return (response.data.values || [])
     .slice(hasHeaders ? 1 : 0)
@@ -66,9 +67,16 @@ module.exports = async (req, res) => {
       if (!tx.date || !tx.amount || !tx.type || !tx.wallet || !tx.categoryLabel) {
         return res.status(400).json({ error: 'Movimiento incompleto.' });
       }
+      // El identificador del navegador hace el POST idempotente: si la red se
+      // corta después de guardar, el reintento devuelve la misma fila y no
+      // crea un movimiento duplicado.
+      if (tx.clientId) {
+        const existing = (await list(sheets)).find((item) => item.clientId === String(tx.clientId));
+        if (existing) return res.status(200).json({ ok: true, id: existing.id });
+      }
       const appended = await sheets.spreadsheets.values.append({
-        spreadsheetId, range: `'${sheetName}'!A:I`, valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel, tx.debtId || '', tx.cardId || '', Number(tx.installments) || 1]] },
+        spreadsheetId, range: `'${sheetName}'!A:J`, valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[tx.date, tx.note || '', Number(tx.amount), tx.type === 'ingreso' ? 'Ingreso' : 'Egreso', tx.wallet, tx.categoryLabel, tx.debtId || '', tx.cardId || '', Number(tx.installments) || 1, tx.clientId || '']] },
       });
       const updatedRange = appended.data?.updates?.updatedRange || '';
       const rowMatch = /!A(\d+)(?::|$)/.exec(updatedRange);
@@ -83,8 +91,8 @@ module.exports = async (req, res) => {
       const row = String(original.id || '').replace('row-', '');
       if (!/^\d+$/.test(row)) return res.status(400).json({ error: 'Movimiento sin identificador de Sheet.' });
       await sheets.spreadsheets.values.update({
-        spreadsheetId, range: `'${sheetName}'!A${row}:I${row}`, valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [[updated.date, updated.note || '', Number(updated.amount), normalizedType(updated.type) === 'ingreso' ? 'Ingreso' : 'Egreso', updated.wallet, updated.categoryLabel, updated.debtId || '', updated.cardId || '', Number(updated.installments) || 1]] },
+        spreadsheetId, range: `'${sheetName}'!A${row}:J${row}`, valueInputOption: 'USER_ENTERED',
+        requestBody: { values: [[updated.date, updated.note || '', Number(updated.amount), normalizedType(updated.type) === 'ingreso' ? 'Ingreso' : 'Egreso', updated.wallet, updated.categoryLabel, updated.debtId || '', updated.cardId || '', Number(updated.installments) || 1, updated.clientId || original.clientId || '']] },
       });
       return res.status(200).json({ ok: true });
     }
@@ -95,7 +103,7 @@ module.exports = async (req, res) => {
       const match = rows.find(tx => tx.id === target.id);
       if (!match) return res.status(404).json({ error: 'Movimiento no encontrado.' });
       const row = match.id.replace('row-', '');
-      await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${sheetName}'!A${row}:I${row}` });
+      await sheets.spreadsheets.values.clear({ spreadsheetId, range: `'${sheetName}'!A${row}:J${row}` });
       return res.status(200).json({ ok: true });
     }
 

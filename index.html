@@ -58,6 +58,7 @@ const BUDGETS_API_URL = '/api/budgets';
 const OPENING_BALANCES_API_URL = '/api/opening-balances';
 const DEBTS_API_URL = '/api/debts';
 const CARDS_API_URL = '/api/cards';
+const MOVEMENTS_OUTBOX_KEY = 'dz_movements_outbox';
 
 const INCOME_CATEGORIES = [
   { id: 'uber', label: 'Uber', icon: '🚗' },
@@ -153,6 +154,7 @@ function parseAndMapRows(rows, existingKeys) {
       debtId: r[7] || '',
       cardId: r[8] || '',
       installments: Number(r[9]) || 1,
+      clientId: r[10] || '',
       wallet: normalizeWallet(r[4]),
       note: (r[1] || '').trim(),
       date: dateStr,
@@ -324,17 +326,43 @@ function FinanzasAppInner() {
   const [editingCard, setEditingCard] = useState(null);
   const [cardPurchaseId, setCardPurchaseId] = useState('');
   const [cardInstallments, setCardInstallments] = useState('1');
+  const [pendingSyncCount, setPendingSyncCount] = useState(() => loadJSON(MOVEMENTS_OUTBOX_KEY, []).length);
 
   useEffect(() => { saveJSON('dz_transactions', transactions); }, [transactions]);
 
   useEffect(() => {
     pullNow();
+    retryPendingTransactions();
     pullBudgets();
     pullOpeningBalances();
     pullDebts();
     pullCards();
     // eslint-disable-next-line
   }, []); // solo al abrir la app
+
+  function queuedTransactions() {
+    return loadJSON(MOVEMENTS_OUTBOX_KEY, []);
+  }
+
+  function queueTransaction(tx) {
+    const queue = queuedTransactions();
+    if (!queue.some((item) => item.id === tx.id)) {
+      queue.push(tx);
+      saveJSON(MOVEMENTS_OUTBOX_KEY, queue);
+      setPendingSyncCount(queue.length);
+    }
+  }
+
+  function removeQueuedTransaction(id) {
+    const queue = queuedTransactions().filter((item) => item.id !== id);
+    saveJSON(MOVEMENTS_OUTBOX_KEY, queue);
+    setPendingSyncCount(queue.length);
+  }
+
+  async function retryPendingTransactions() {
+    const queue = queuedTransactions();
+    for (const tx of queue) await syncToSheets(tx, true);
+  }
 
   async function pullBudgets() {
     try {
@@ -451,7 +479,7 @@ function FinanzasAppInner() {
       const objRows = await response.json();
       if (!response.ok) throw new Error(objRows.error || 'No se pudo leer Google Sheets.');
       if (!Array.isArray(objRows)) throw new Error('Formato inesperado desde Google Sheets.');
-        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id, o.debtId, o.cardId, o.installments]);
+        const rows = objRows.map((o) => [o.date, o.note, o.amount, o.type, o.wallet, o.categoryLabel, o.id, o.debtId, o.cardId, o.installments, o.clientId]);
         setTransactions((previous) => {
           // Una respuesta parcial o adelantada nunca debe vaciar el historial
           // local. Las filas confirmadas se actualizan y las nuevas se agregan.
@@ -474,7 +502,7 @@ function FinanzasAppInner() {
     setCategory(next === 'ingreso' ? INCOME_CATEGORIES[0].id : EXPENSE_CATEGORIES[0].id);
   }
 
-  async function syncToSheets(tx) {
+  async function syncToSheets(tx, isRetry = false) {
     setSyncStatus('sending');
     try {
       const response = await fetch(MOVEMENTS_API_URL, {
@@ -490,10 +518,11 @@ function FinanzasAppInner() {
         const persisted = { ...tx, id: result.id };
         setTransactions((prev) => prev.map((item) => item.id === tx.id ? persisted : item));
       }
+      removeQueuedTransaction(tx.id);
       setSyncStatus('sent');
     } catch (e) {
       setSyncStatus('failed');
-      setImportMsg(e.message || 'No se pudo guardar el movimiento.');
+      setImportMsg(`No se guardó en Sheets y se reintentará automáticamente: ${e.message || ''}`);
     }
   }
 
@@ -555,8 +584,10 @@ function FinanzasAppInner() {
       installments: cardPurchaseId ? Math.max(1, Number(cardInstallments) || 1) : 1,
       wallet: chosenCard ? `Tarjeta · ${chosenCard.name}` : wallet, note: note.trim(), date: todayStr(),
     };
+    tx.clientId = tx.id;
     if (editingTx) updateInSheets(editingTx, tx);
     else {
+      queueTransaction(tx);
       setTransactions((prev) => [tx, ...prev]);
       syncToSheets(tx);
     }
@@ -747,6 +778,17 @@ function FinanzasAppInner() {
               </span>
             </div>
           </div>
+
+          {pendingSyncCount > 0 && (
+            <div style={{ marginTop: '-6px', marginBottom: '12px', padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2574c', backgroundColor: 'rgba(226,87,76,0.1)', color: '#f29b93', fontSize: '11px' }}>
+              ⚠ {pendingSyncCount} movimiento{pendingSyncCount > 1 ? 's' : ''} pendiente{pendingSyncCount > 1 ? 's' : ''} de guardar en Sheets. Se reintentará automáticamente.
+            </div>
+          )}
+          {syncStatus === 'failed' && importMsg && (
+            <div style={{ marginTop: '-6px', marginBottom: '12px', padding: '8px 10px', borderRadius: '6px', border: '1px solid #e2574c', backgroundColor: 'rgba(226,87,76,0.1)', color: '#f29b93', fontSize: '11px' }}>
+              {importMsg}
+            </div>
+          )}
 
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
